@@ -1,0 +1,25 @@
+﻿version: "3.9"
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: guia_oficios_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: guia_user
+      POSTGRES_PASSWORD: guia_password
+      POSTGRES_DB: guia_oficios
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guia_user -d guia_oficios"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+
