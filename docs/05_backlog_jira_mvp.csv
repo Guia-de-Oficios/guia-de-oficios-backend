@@ -1,0 +1,130 @@
+Issue Type,Issue Key,Issue ID,Parent ID,Summary,Description,Priority,Story Points,Labels,Component
+Epic,GDO-1,1,,Épica 1: Infraestructura Base de Datos Real y Almacenamiento (PostgreSQL + PostGIS + Storage),"Configuración productiva de PostgreSQL 16 + PostGIS, eliminación total del repositorio en memoria (InMemoryStore), sistema de migraciones reales y almacenamiento real de archivos/fotos (DNI, Matrícula, Problemas y Portfolio).",Highest,,mvp;infra;database,Backend-Go
+Epic,GDO-2,2,,Épica 2: Autenticación Real y Seguridad (JWT + Bcrypt + Google OAuth2),"Implementación real de registro manual con hash bcrypt, inicio de sesión, validación de ID Token real de Google Sign-In, emisión de Access/Refresh JWT y middlewares de autorización por rol (client/professional).",Highest,,mvp;auth;security,Backend-Go
+Epic,GDO-3,3,,Épica 3: API Backend Real en Golang (100% SQL/PostGIS sin Mocks),"Reemplazo de todos los fallbacks en memoria por consultas transaccionales reales en PostgreSQL + PostGIS (ST_DWithin, ST_Distance) para categorías, diagnóstico, profesionales, solicitudes, reseñas, verificación DNI y panel profesional.",Highest,,mvp;backend;postgis,Backend-Go
+Epic,GDO-4,4,,Épica 4: Arquitectura Base Android y Networking Real (Gradle + Hilt + Retrofit + DataStore),"Configuración del proyecto Android Studio compilable desde cero, inyección de dependencias con Hilt, cliente HTTP OkHttp + Retrofit con interceptor JWT real, persistencia de sesión en Jetpack DataStore y manejo de estados de red reales.",Highest,,mvp;android;architecture,Android-App
+Epic,GDO-5,5,,Épica 5: Flujos Android de Onboarding y Cliente Conectados al Backend (Pantallas Stitch 1 a 8),"Implementación 100% fiel a Stitch en Jetpack Compose conectada a los endpoints reales del backend para las Pantallas 1 a 8, incluyendo cámara/galería real (Multipart) e Intents nativos reales a WhatsApp y marcador telefónico.",High,,mvp;android;stitch-ui;client,Android-App
+Epic,GDO-6,6,,Épica 6: Flujos Android del Profesional Conectados al Backend (Pantallas Stitch 9 y 10),"Implementación 100% fiel a Stitch en Jetpack Compose para el Onboarding Profesional con carga real de fotos de DNI frente/dorso y Matrícula (Pantalla 9) y el Panel de Solicitudes y Disponibilidad en vivo (Pantalla 10).",High,,mvp;android;stitch-ui;professional,Android-App
+Epic,GDO-7,7,,Épica 7: Despliegue Cloud del Backend y Generación de APK Demo Instalable,"Despliegue del backend Go + PostgreSQL/PostGIS en entorno accesible con HTTPS para que el teléfono físico se conecte desde cualquier red (Wi-Fi o datos móviles), pruebas End-to-End en dispositivo físico y generación del APK firmado instalable.",Highest,,mvp;release;apk;cloud,DevOps-Release
+Story,GDO-8,8,1,[BE-DB] Eliminar InMemoryStore y conectar driver pgxpool nativo a PostgreSQL 16 + PostGIS,"Como desarrollador backend, quiero eliminar por completo el almacenamiento en memoria (`InMemoryStore`) e integrar `jackc/pgx/v5/pgxpool` para que el servidor opere exclusivamente contra PostgreSQL 16 + PostGIS real.
+
+Criterios de Aceptación (DoD):
+1. Se agrega `github.com/jackc/pgx/v5` a `go.mod`.
+2. Se elimina `InMemoryStore` de `internal/repository/store.go`; si PostgreSQL no está disponible al iniciar, el servidor falla explícitamente (`log.Fatal`) en lugar de usar datos falsos en memoria.
+3. El endpoint `GET /api/v1/health` ejecuta `db.Ping(ctx)` real y devuelve el estado de PostGIS (`SELECT PostGIS_Version()`).",Highest,3,mvp;postgres;no-mocks,Backend-Go
+Story,GDO-9,9,1,[BE-DB] Completar migraciones SQL definitivas e índices espaciales GIST,"Como desarrollador backend, quiero consolidar el esquema DDL en PostgreSQL para soportar usuarios con hash de contraseña, coordenadas `GEOGRAPHY(Point, 4326)`, URLs reales de documentos y estados de solicitudes.
+
+Criterios de Aceptación (DoD):
+1. Tabla `users` incluye `password_hash`, `google_sub`, `auth_provider`, `saved_address`, `saved_lat`, `saved_lng` y `role`.
+2. Tabla `professional_profiles` tiene índice espacial `GIST(base_location)` y columnas para `dni_front_url`, `dni_back_url`, `license_doc_url`, `is_available_now`, `visit_price_amount` y métricas calculadas.
+3. Script de migración automática al arrancar el servidor o comando CLI `make migrate-up`.",Highest,3,mvp;sql;postgis,Backend-Go
+Story,GDO-10,10,1,[BE-STORAGE] Implementar endpoint Multipart para subida real de imágenes (DNI / Problemas / Portfolio),"Como usuario de la app (vecino o profesional), quiero subir fotos reales tomadas con la cámara o elegidas de la galería del celular para que se almacenen de forma persistente y devuelvan una URL pública accesible por la app.
+
+Criterios de Aceptación (DoD):
+1. Endpoint `POST /api/v1/uploads` que recibe `multipart/form-data` con el campo `file` y `category` (`dni_front`, `dni_back`, `license`, `request_photo`, `portfolio`).
+2. Validación de tipo MIME (`image/jpeg`, `image/png`, `image/webp` o `application/pdf`) y tamaño máximo (10 MB).
+3. Almacenamiento persistente en volumen/disco servido por HTTP o bucket S3/Cloudflare R2, retornando `{""url"": ""https://.../uploads/...""}`.",High,5,mvp;uploads;multipart,Backend-Go
+Story,GDO-11,11,2,[BE-AUTH] Implementar Registro Manual y Login con Bcrypt y emisión de JWT real,"Como usuario nuevo o registrado, quiero crear mi cuenta con correo, teléfono y contraseña o iniciar sesión para obtener un token JWT seguro que identifique mi sesión real en cada pantalla.
+
+Criterios de Aceptación (DoD):
+1. `POST /api/v1/auth/register` hashea la contraseña con `golang.org/x/crypto/bcrypt`, inserta el registro en la tabla `users` (y crea la fila inicial en `professional_profiles` si `role == 'professional'`).
+2. `POST /api/v1/auth/login` verifica email y contraseña contra PostgreSQL y devuelve `{""token"": ""..."", ""user"": {...}}`.
+3. Validación de email único (retorna HTTP 409 Conflict si ya existe).",Highest,5,mvp;auth;jwt,Backend-Go
+Story,GDO-12,12,2,[BE-AUTH] Implementar autenticación real con Google Sign-In (POST /api/v1/auth/google),"Como usuario en la Pantalla 2 de Stitch, quiero tocar 'Continuar con Google' para autenticarme con mi cuenta de Google del teléfono Android sin escribir contraseña.
+
+Criterios de Aceptación (DoD):
+1. Endpoint `POST /api/v1/auth/google` que recibe `{""id_token"": ""..."", ""role"": ""client|professional""}`.
+2. Valida la firma y audiencia del `id_token` de Google (o perfil OAuth2 verificado).
+3. Si el usuario no existe en PostgreSQL lo crea automáticamente; si existe, recupera su perfil y retorna el JWT propio de Guía de Oficios.",High,5,mvp;auth;google-oauth,Backend-Go
+Story,GDO-13,13,2,[BE-AUTH] Implementar Middleware JWT y endpoints de perfil (/api/v1/auth/me y cambio de dirección),"Como vecino o profesional autenticado, quiero que mis peticiones estén protegidas por mi token JWT y poder actualizar mi dirección guardada y coordenadas desde el Home.
+
+Criterios de Aceptación (DoD):
+1. Middleware HTTP que extrae `Authorization: Bearer <token>`, valida firma HMAC/RSA y expiración, e inyecta `user_id` y `role` en `r.Context()`.
+2. `GET /api/v1/auth/me` consulta PostgreSQL con el `user_id` del token y devuelve los datos reales del usuario y su `professional_id` si es profesional.
+3. `PATCH /api/v1/users/me/address` actualiza `saved_address`, `saved_lat` y `saved_lng` en la base de datos.",High,3,mvp;auth;middleware,Backend-Go
+Story,GDO-14,14,3,[BE-API] Implementar búsqueda geoespacial real en PostGIS (GET /api/v1/professionals),"Como vecino en la Pantalla 4 de Stitch, quiero buscar profesionales de un oficio ordenados por distancia real a mi domicilio y filtrados por 'Urgencias hoy', 'Matriculados' y 'Mejor valorados'.
+
+Criterios de Aceptación (DoD):
+1. Consulta 100% SQL con PostGIS usando `ST_Distance(p.base_location, ST_SetSRID(ST_MakePoint($lng, $lat), 4326)::geography)` para calcular los metros/cuadras reales y `ST_DWithin` para filtrar dentro del radio de cobertura del profesional.
+2. Soporta filtros combinables por query params: `category_id`, `q` (búsqueda textual `ILIKE`), `only_urgent=true`, `only_licensed=true`, `top_rated=true`.
+3. Solo devuelve profesionales con `is_available_now = TRUE`.
+4. Formatea `distance_label` dinámicamente según los metros reales (ej. 'A 6 cuadras (600 metros)' o 'A 1.4 km de tu domicilio').",Highest,5,mvp;postgis;search,Backend-Go
+Story,GDO-15,15,3,[BE-API] Implementar consulta SQL completa de Ficha de Profesional (GET /api/v1/professionals/{id}),"Como vecino en la Pantalla 5 de Stitch, quiero ver el perfil completo de un profesional con sus datos reales, sellos de verificación, años de experiencia, precio de visita, fotos de trabajos realizados y opiniones de vecinos desde PostgreSQL.
+
+Criterios de Aceptación (DoD):
+1. Consulta real a `professional_profiles` + `users` + `categories` por UUID.
+2. Carga desde la tabla `portfolio_items` todas las fotos reales de trabajos verificados del profesional.
+3. Carga desde la tabla `reviews` las últimas opiniones reales de vecinos con sus `highlights` JSONB y fechas.",High,3,mvp;backend;profile,Backend-Go
+Story,GDO-16,16,3,[BE-API] Implementar persistencia real de Solicitud Guiada y Confirmación (POST y GET /api/v1/requests),"Como vecino en las Pantallas 6 y 7 de Stitch, quiero registrar mi solicitud de servicio (urgencia, descripción del problema y URL de foto real) en PostgreSQL antes de pasar a WhatsApp o llamada telefónica.
+
+Criterios de Aceptación (DoD):
+1. `POST /api/v1/requests` toma el `client_id` del usuario autenticado (o datos del vecino), calcula la distancia al profesional, inserta la fila en `service_requests` y suma `+1` a `monthly_contacts_count` del profesional.
+2. `GET /api/v1/requests/{id}` devuelve desde PostgreSQL el detalle completo del pedido y el teléfono/matrícula del profesional para la Pantalla 7 de confirmación.
+3. `GET /api/v1/requests/my` devuelve el historial de contactos realizados por el vecino para la pestaña 'Mis contactos'.",Highest,5,mvp;backend;requests,Backend-Go
+Story,GDO-17,17,3,[BE-API] Implementar transacción SQL de Calificación y recálculo de reputación (POST /api/v1/requests/{id}/reviews),"Como vecino en la Pantalla 8 de Stitch, quiero calificar un trabajo finalizado con 1 a 5 estrellas, elegir los 5 aspectos destacables y dejar un comentario para que se actualice en tiempo real el puntaje del profesional en la base de datos.
+
+Criterios de Aceptación (DoD):
+1. Transacción SQL (`BEGIN ... COMMIT`) que verifica que la solicitud exista, cambia su `status` a `'completed'` e inserta la reseña en `reviews` con el array JSONB de `highlights` (`Puntualidad`, `Precio justo`, `Honestidad y prolijidad`, `Excelente atención`, `Solución en el acto`).
+2. Dentro de la misma transacción recalcula con `AVG(rating)` y `COUNT(*)` los campos `rating_avg`, `reviews_count` y `jobs_completed_count` en `professional_profiles`.
+3. Impide calificar dos veces la misma solicitud (constraint `UNIQUE(request_id)`).",High,5,mvp;backend;reviews,Backend-Go
+Story,GDO-18,18,3,[BE-API] Implementar Onboarding Profesional DNI/Matrícula y Panel de Solicitudes en SQL (Pantallas 9 y 10),"Como profesional en las Pantallas 9 y 10 de Stitch, quiero guardar en PostgreSQL mi oficio principal, especialidades, zona, fotos de DNI frente/dorso y matrícula, cambiar mi interruptor de disponibilidad en vivo y consultar mi bandeja real de solicitudes recibidas.
+
+Criterios de Aceptación (DoD):
+1. `POST /api/v1/professionals/{id}/verification` actualiza en PostgreSQL `primary_category_id`, `trade_title`, `specialties`, `neighborhood`, `base_location`, `dni_front_url`, `dni_back_url`, `license_number`, `license_issuer`, `license_doc_url`, `is_dni_verified = TRUE` y `is_licensed`.
+2. `PATCH /api/v1/professionals/{id}/availability` actualiza `is_available_now` en `professional_profiles` en tiempo real.
+3. `GET /api/v1/professionals/{id}/dashboard` ejecuta consultas SQL reales para devolver las métricas del Bento Grid (`rating_avg`, `reviews_count`, `new_today_count`, `urgent_count`, `month_contacts`) y la lista de `service_requests` recibidas ordenadas por urgencia y fecha.",Highest,5,mvp;backend;pro-panel,Backend-Go
+Story,GDO-19,19,4,[AND-ARCH] Configurar proyecto Gradle completo en Android Studio (Kotlin + Compose + Hilt + Retrofit + Coil),"Como desarrollador Android, quiero que la carpeta `android-app` sea un proyecto Gradle 100% completo y compilable (`./gradlew assembleDebug`) con todas sus dependencias declaradas y permisos configurados.
+
+Criterios de Aceptación (DoD):
+1. Archivos `settings.gradle.kts`, `build.gradle.kts` (root y `:app`), `gradle.properties`, `gradlew` y `AndroidManifest.xml` completos.
+2. Dependencias configuradas: Jetpack Compose BOM (Material 3), Navigation Compose, Hilt (`dagger.hilt.android`), Retrofit2 + OkHttp3 + LoggingInterceptor + Kotlinx Serialization / Gson, Coil (`io.coil-kt:coil-compose`) para cargar imágenes reales desde URL, y Jetpack DataStore Preferences.
+3. Permisos en `AndroidManifest.xml`: `INTERNET`, `ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION` y queries para WhatsApp (`com.whatsapp`) y `tel:`.",Highest,5,mvp;android;gradle,Android-App
+Story,GDO-20,20,4,[AND-ARCH] Implementar gestión de sesión real (DataStore + AuthInterceptor JWT) y repositorio sin mocks,"Como desarrollador Android, quiero almacenar el JWT real y el rol del usuario en `DataStore` y adjuntarlo automáticamente en cada petición HTTP mediante un `Interceptor` de OkHttp, sin usar listas harcodeadas en la app.
+
+Criterios de Aceptación (DoD):
+1. `SessionManager` sobre Jetpack DataStore que guarda y observa `jwt_token`, `user_id`, `user_role`, `user_name` y `saved_address`.
+2. `AuthInterceptor` de OkHttp que añade `Authorization: Bearer <token>` a todas las llamadas de `GuiaDeOficiosApi`.
+3. `BuildConfig.API_BASE_URL` configurable para apuntar al backend real (IP local / servidor cloud HTTPS) sin ningún mock local.",Highest,3,mvp;android;networking,Android-App
+Story,GDO-21,21,5,[AND-UI] Conectar Pantallas Stitch 1 y 2 (Bienvenida, Selección de Rol, Registro Manual y Google Sign-In),"Como usuario en la app Android, quiero usar las Pantallas 1 (`bienvenida_y_selecci_n_de_rol`) y 2 (`registro_google_o_manual`) respetando al 100% el diseño de Stitch para elegir mi rol, registrarme o iniciar sesión contra el backend real.
+
+Criterios de Aceptación (DoD):
+1. La UI en Jetpack Compose replica exactamente el HTML/PNG de Stitch (tarjetas de rol con radio indicator, botón 'Continuar con Google', formulario con ojito de contraseña y badge 'Red Vecinal Segura').
+2. `AuthViewModel` invoca `POST /api/v1/auth/register`, `POST /api/v1/auth/login` y `POST /api/v1/auth/google`.
+3. Al autenticarse como `client` navega a la Pantalla 3 (Inicio Cliente); al registrarse como `professional` navega a la Pantalla 9 (Verificación DNI).",High,5,mvp;android;stitch-ui,Android-App
+Story,GDO-22,22,5,[AND-UI] Conectar Pantallas Stitch 3 y 4 (Inicio Cliente, Diagnóstico, Cambio de Dirección y Resultados con Filtros),"Como vecino en las Pantallas 3 (`cliente_inicio_y_categor_as`) y 4 (`cliente_resultados_de_profesionales`), quiero ver mi dirección real, usar el buscador o el asistente '¿Qué está pasando?', tocar un oficio y filtrar profesionales en tiempo real desde la base de datos.
+
+Criterios de Aceptación (DoD):
+1. Pantalla 3 consume `GET /api/v1/categories` y muestra las 8 tarjetas con sus íconos Material Symbols y los badges `Matriculados` (Gasista) y `Urgencias` (Cerrajero).
+2. El botón 'Cambiar dirección' abre un diálogo/pantalla que actualiza la dirección real vía `PATCH /api/v1/users/me/address`.
+3. El botón '¿Qué está pasando?' abre el asistente que consulta `POST /api/v1/diagnostic` y redirige al rubro recomendado.
+4. Pantalla 4 consume `GET /api/v1/professionals` reactivamente al tocar los chips `Todos`, `Urgencias hoy`, `Matriculados` y `Mejor valorados`, y el botón 'Llamar a asistencia barrial' abre el marcador telefónico.",High,5,mvp;android;stitch-ui,Android-App
+Story,GDO-23,23,5,[AND-UI] Conectar Pantalla Stitch 5 (Perfil del Profesional, Galería con Coil y Barra Fija de Contacto),"Como vecino en la Pantalla 5 (`cliente_perfil_del_profesional_y_contacto`), quiero ver todos los datos reales del profesional seleccionado, las fotos de sus trabajos cargadas por red y los botones fijos inferiores de contacto.
+
+Criterios de Aceptación (DoD):
+1. Consume `GET /api/v1/professionals/{id}` mostrando foto real con `AsyncImage` (Coil), sellos de DNI verificado, número de matrícula oficial, guardia de urgencias, biografía, años de experiencia, valor de visita y opiniones reales de vecinos.
+2. Los botones inferiores de 56dp ('Hablar por WhatsApp con [Nombre]' y 'Llamar por teléfono a [Nombre]') llevan al flujo de Solicitud Guiada (Pantalla 6) para dejar registrado el contacto por seguridad.",High,3,mvp;android;stitch-ui,Android-App
+Story,GDO-24,24,5,[AND-UI] Conectar Pantallas Stitch 6 y 7 (Solicitud Guiada con Cámara/Galería Real e Intents a WhatsApp y Teléfono),"Como vecino en las Pantallas 6 (`cliente_solicitud_guiada_a_roberto`) y 7 (`cliente_elegir_contacto_y_confirmaci_n`), quiero seleccionar la urgencia, escribir el problema o tocar los chips rápidos, sacar/adjuntar una foto real desde mi celular, registrar el pedido en el servidor y abrir WhatsApp o la llamada telefónica real.
+
+Criterios de Aceptación (DoD):
+1. El botón 'Sacar foto o adjuntar imagen' abre el selector nativo de cámara/galería de Android (`ActivityResultContracts.PickVisualMedia` / `TakePicture`), sube la foto real mediante `POST /api/v1/uploads` y muestra la previsualización con opción de borrar.
+2. Al confirmar, envía `POST /api/v1/requests` al backend Go y navega a la Pantalla 7 con el ID real creado.
+3. En la Pantalla 7, el botón verde `#15803D` abre la app de **WhatsApp** instalada en el teléfono (`https://wa.me/<telefono>?text=...`) con el resumen del problema ya escrito, y el botón azul `#1E40AF` abre el marcador telefónico (`Intent.ACTION_DIAL` con `tel:<telefono>`).",Highest,8,mvp;android;whatsapp;camera,Android-App
+Story,GDO-25,25,5,[AND-UI] Conectar Pantalla Stitch 8 y Pestaña 'Mis contactos' (Listado de Solicitudes y Calificación Real),"Como vecino en la pestaña 'Mis contactos' y en la Pantalla 8 (`cliente_trabajo_terminado_y_calificaci_n`), quiero ver los profesionales que contacté y calificar un trabajo terminado para actualizar su puntuación real.
+
+Criterios de Aceptación (DoD):
+1. La pestaña 'Mis contactos' del `BottomNavBar` consulta `GET /api/v1/requests/my` y permite tocar 'Marcar como finalizado y calificar'.
+2. La Pantalla 8 muestra el selector interactivo de 1 a 5 estrellas de 48dp, los 5 botones seleccionables (`Puntualidad`, `Precio justo`, `Honestidad y prolijidad`, `Excelente atención`, `Solución en el acto`) y el campo de comentario.
+3. Al tocar 'Publicar calificación y finalizar', ejecuta `POST /api/v1/requests/{id}/reviews` y al volver al perfil del profesional se refleja inmediatamente el nuevo promedio y la nueva opinión.",High,5,mvp;android;reviews,Android-App
+Story,GDO-26,26,6,[AND-UI] Conectar Pantallas Stitch 9 y 10 (Onboarding Profesional con Fotos de DNI Reales y Panel Profesional en Vivo),"Como profesional de oficio en las Pantallas 9 (`profesional_registro_y_verificaci_n_dni`) y 10 (`profesional_panel_y_solicitudes_recibidas`), quiero subir las fotos reales del frente y dorso de mi DNI y mi matrícula, activar o pausar mi disponibilidad en tiempo real y responder por WhatsApp o llamada a las solicitudes de mis vecinos.
+
+Criterios de Aceptación (DoD):
+1. En la Pantalla 9, los botones de frente de DNI, dorso de DNI y credencial de matrícula suben archivos reales con `POST /api/v1/uploads` y al tocar 'Enviar y activar mi perfil' guardan todo vía `POST /api/v1/professionals/{id}/verification`.
+2. En la Pantalla 10, se consume `GET /api/v1/professionals/{id}/dashboard` mostrando el estado real de disponibilidad, el Bento Grid con datos de PostgreSQL y la lista de solicitudes recibidas (destacando las `URGENTE`).
+3. El botón 'Pausar disponibilidad' / 'Activar disponibilidad' invoca `PATCH /api/v1/professionals/{id}/availability` y actualiza el estado en la base de datos.
+4. Los botones 'Responder por WhatsApp' y 'Llamar a [Vecino]' de cada tarjeta abren WhatsApp o llamada directa al teléfono real del cliente.",Highest,8,mvp;android;pro-panel,Android-App
+Story,GDO-27,27,7,[DEVOPS-APK] Desplegar Backend + PostgreSQL/PostGIS en Cloud y generar APK Demo instalable para Android,"Como equipo de Guía de Oficios, queremos tener el backend Go y la base de datos PostgreSQL/PostGIS corriendo en una URL pública (Render / Railway / Fly.io / VPS con Docker) y generar el archivo `.apk` firmado listo para instalar en nuestros teléfonos Android físicos y mostrar el MVP funcionando de punta a punta.
+
+Criterios de Aceptación (DoD):
+1. `Dockerfile` multi-stage para el backend Go y configuración lista para producción con PostgreSQL + PostGIS.
+2. Backend accesible por HTTPS para que el APK funcione tanto con Wi-Fi como con datos móviles 4G/5G en cualquier teléfono Android.
+3. Generación y verificación del archivo `guia-de-oficios-mvp-demo.apk` firmado (`assembleRelease` / `assembleDebug`), probado en dispositivo físico recorriendo las 10 pantallas de Stitch con datos reales de principio a fin.",Highest,5,mvp;apk;deploy;demo,DevOps-Release
