@@ -14,6 +14,7 @@ import (
 	"guiaoficios/backend/internal/auth"
 	"guiaoficios/backend/internal/models"
 	"guiaoficios/backend/internal/repository"
+	"guiaoficios/backend/internal/telemetry"
 )
 
 // testStore implementa repository.Store exclusivamente para pruebas unitarias de handlers HTTP (archivo *_test.go).
@@ -254,10 +255,11 @@ func TestStitchFullWorkflowAPI(t *testing.T) {
 	store := newTestStore()
 	tmpUploadDir := t.TempDir()
 	h := NewAPIHandler(store, "postgresql+postgis", tmpUploadDir)
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	rawMux := http.NewServeMux()
+	h.RegisterRoutes(rawMux)
+	mux := telemetry.ObservabilityMiddleware(rawMux)
 
-	// 1. Pantalla 2: Registro de usuario con contraseña y obtención de JWT
+	// 1. Pantalla 2: Registro de usuario con contraseña y obtención de JWT + Propagación de X-Trace-ID
 	regPayload := models.RegisterUserInput{
 		FullName:     "Carlos Alberto Gómez",
 		Phone:        "11 5544-3322",
@@ -268,10 +270,14 @@ func TestStitchFullWorkflowAPI(t *testing.T) {
 	}
 	regBody, _ := json.Marshal(regPayload)
 	reqReg := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(regBody))
+	reqReg.Header.Set("X-Trace-ID", "and-test-trace-001")
 	recReg := httptest.NewRecorder()
 	mux.ServeHTTP(recReg, reqReg)
 	if recReg.Code != http.StatusCreated {
 		t.Fatalf("esperaba 201 en registro, obtuvo %d: %s", recReg.Code, recReg.Body.String())
+	}
+	if gotTrace := recReg.Header().Get("X-Trace-ID"); gotTrace != "and-test-trace-001" {
+		t.Fatalf("esperaba X-Trace-ID=and-test-trace-001, obtuvo %q", gotTrace)
 	}
 	var authRes models.AuthResponse
 	_ = json.Unmarshal(recReg.Body.Bytes(), &authRes)
@@ -393,4 +399,13 @@ func TestStitchFullWorkflowAPI(t *testing.T) {
 	if recDash.Code != http.StatusOK {
 		t.Fatalf("esperaba 200 en dashboard profesional, obtuvo %d", recDash.Code)
 	}
+
+	// 9. Verificar Snapshot de Métricas Clave de Datadog (/api/v1/metrics)
+	reqMetrics := httptest.NewRequest(http.MethodGet, "/api/v1/metrics", nil)
+	recMetrics := httptest.NewRecorder()
+	mux.ServeHTTP(recMetrics, reqMetrics)
+	if recMetrics.Code != http.StatusOK {
+		t.Fatalf("esperaba 200 en /api/v1/metrics, obtuvo %d", recMetrics.Code)
+	}
+	t.Logf("Snapshot Métricas Datadog: %s", recMetrics.Body.String())
 }

@@ -17,6 +17,7 @@ import (
 	"guiaoficios/backend/internal/auth"
 	"guiaoficios/backend/internal/models"
 	"guiaoficios/backend/internal/repository"
+	"guiaoficios/backend/internal/telemetry"
 )
 
 type contextKey string
@@ -27,6 +28,7 @@ type APIHandler struct {
 	store     repository.Store
 	mode      string
 	uploadDir string
+	metrics   *telemetry.MetricsCollector
 }
 
 func NewAPIHandler(store repository.Store, mode string, uploadDir string) *APIHandler {
@@ -38,12 +40,14 @@ func NewAPIHandler(store repository.Store, mode string, uploadDir string) *APIHa
 		store:     store,
 		mode:      mode,
 		uploadDir: uploadDir,
+		metrics:   telemetry.GetMetrics(),
 	}
 }
 
 func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
-	// Health check real contra PostgreSQL + PostGIS (GDO-8)
+	// Health check real contra PostgreSQL + PostGIS (GDO-8) y Métricas Clave Datadog
 	mux.HandleFunc("GET /api/v1/health", h.handleHealth)
+	mux.HandleFunc("GET /api/v1/metrics", h.handleMetrics)
 
 	// Archivos estáticos de fotos de problemas, DNI y matrículas (GDO-10)
 	fileServer := http.FileServer(http.Dir(h.uploadDir))
@@ -112,13 +116,22 @@ func (h *APIHandler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		dbStatus = "error: " + err.Error()
 		httpStatus = http.StatusServiceUnavailable
+		telemetry.LogError(r.Context(), "db.ping", err, nil)
+	} else {
+		telemetry.LogAction(r.Context(), "db.ping", map[string]any{"engine": dbInfo})
 	}
 	writeJSON(w, httpStatus, map[string]any{
 		"status":   "ok",
 		"service":  "Guía de Oficios API (PostgreSQL + PostGIS)",
 		"storage":  h.mode,
 		"database": dbStatus,
+		"trace_id": telemetry.TraceIDFromContext(r.Context()),
 	})
+}
+
+func (h *APIHandler) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	telemetry.LogAction(r.Context(), "metrics.snapshot", map[string]any{"provider": "datadog_dogstatsd"})
+	writeJSON(w, http.StatusOK, h.metrics.Snapshot())
 }
 
 func (h *APIHandler) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
@@ -133,9 +146,17 @@ func (h *APIHandler) handleRegisterUser(w http.ResponseWriter, r *http.Request) 
 	}
 	user, err := h.store.RegisterUser(r.Context(), input)
 	if err != nil {
+		h.metrics.RecordAuthEvent("register", input.Role, false)
+		telemetry.LogError(r.Context(), "auth.register", err, map[string]any{"email": input.Email, "role": input.Role})
 		writeError(w, http.StatusBadRequest, "No se pudo completar el registro: "+err.Error())
 		return
 	}
+	h.metrics.RecordAuthEvent("register", user.Role, true)
+	telemetry.LogAction(r.Context(), "auth.register", map[string]any{
+		"user_id": user.ID,
+		"email":   user.Email,
+		"role":    user.Role,
+	})
 	token, _ := auth.GenerateToken(user.ID, user.Email, user.Role, user.ProfessionalID)
 	writeJSON(w, http.StatusCreated, models.AuthResponse{
 		Token: token,
@@ -155,9 +176,17 @@ func (h *APIHandler) handleLoginUser(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.store.AuthenticateUser(r.Context(), input.Email, input.Password)
 	if err != nil {
+		h.metrics.RecordAuthEvent("login", "unknown", false)
+		telemetry.LogError(r.Context(), "auth.login", err, map[string]any{"email": input.Email})
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
+	h.metrics.RecordAuthEvent("login", user.Role, true)
+	telemetry.LogAction(r.Context(), "auth.login", map[string]any{
+		"user_id": user.ID,
+		"email":   user.Email,
+		"role":    user.Role,
+	})
 	token, _ := auth.GenerateToken(user.ID, user.Email, user.Role, user.ProfessionalID)
 	writeJSON(w, http.StatusOK, models.AuthResponse{
 		Token: token,
@@ -173,9 +202,17 @@ func (h *APIHandler) handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.store.AuthenticateGoogle(r.Context(), input)
 	if err != nil {
+		h.metrics.RecordAuthEvent("google", input.Role, false)
+		telemetry.LogError(r.Context(), "auth.google", err, map[string]any{"email": input.Email})
 		writeError(w, http.StatusBadRequest, "Error en autenticación con Google: "+err.Error())
 		return
 	}
+	h.metrics.RecordAuthEvent("google", user.Role, true)
+	telemetry.LogAction(r.Context(), "auth.google", map[string]any{
+		"user_id": user.ID,
+		"email":   user.Email,
+		"role":    user.Role,
+	})
 	token, _ := auth.GenerateToken(user.ID, user.Email, user.Role, user.ProfessionalID)
 	writeJSON(w, http.StatusOK, models.AuthResponse{
 		Token: token,
@@ -187,6 +224,7 @@ func (h *APIHandler) handleGetCurrentUser(w http.ResponseWriter, r *http.Request
 	if claims := getClaims(r); claims != nil && claims.UserID != "" {
 		user, err := h.store.GetUserByID(r.Context(), claims.UserID)
 		if err == nil {
+			telemetry.LogAction(r.Context(), "users.get_me", map[string]any{"user_id": user.ID, "source": "jwt"})
 			writeJSON(w, http.StatusOK, user)
 			return
 		}
@@ -205,6 +243,7 @@ func (h *APIHandler) handleGetCurrentUser(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "Usuario no encontrado")
 		return
 	}
+	telemetry.LogAction(r.Context(), "users.get_me", map[string]any{"user_id": user.ID, "source": "query"})
 	writeJSON(w, http.StatusOK, user)
 }
 
@@ -223,14 +262,20 @@ func (h *APIHandler) handleUpdateUserAddress(w http.ResponseWriter, r *http.Requ
 	}
 	user, err := h.store.UpdateUserAddress(r.Context(), userID, input)
 	if err != nil {
+		telemetry.LogError(r.Context(), "users.update_address", err, map[string]any{"user_id": userID})
 		writeError(w, http.StatusInternalServerError, "No se pudo actualizar la dirección: "+err.Error())
 		return
 	}
+	telemetry.LogAction(r.Context(), "users.update_address", map[string]any{
+		"user_id": userID,
+		"address": input.SavedAddress,
+		"lat":     input.SavedLat,
+		"lng":     input.SavedLng,
+	})
 	writeJSON(w, http.StatusOK, user)
 }
 
 func (h *APIHandler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
-	// Límite de 10 MB para fotos de averías, DNI y matrículas (GDO-10)
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "El archivo supera los 10 MB o el formato multipart es inválido")
 		return
@@ -269,6 +314,7 @@ func (h *APIHandler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 
 	out, err := os.Create(destPath)
 	if err != nil {
+		telemetry.LogError(r.Context(), "uploads.save_file", err, map[string]any{"filename": safeFilename})
 		writeError(w, http.StatusInternalServerError, "Error al almacenar archivo en el servidor")
 		return
 	}
@@ -290,6 +336,12 @@ func (h *APIHandler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	publicURL := fmt.Sprintf("%s://%s/uploads/%s", scheme, host, safeFilename)
 
+	telemetry.LogAction(r.Context(), "uploads.save_file", map[string]any{
+		"category":   category,
+		"filename":   safeFilename,
+		"size_bytes": written,
+	})
+
 	writeJSON(w, http.StatusCreated, models.UploadResponse{
 		URL:      publicURL,
 		Filename: safeFilename,
@@ -301,9 +353,11 @@ func (h *APIHandler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 func (h *APIHandler) handleListCategories(w http.ResponseWriter, r *http.Request) {
 	cats, err := h.store.ListCategories(r.Context())
 	if err != nil {
+		telemetry.LogError(r.Context(), "categories.list", err, nil)
 		writeError(w, http.StatusInternalServerError, "Error al obtener rubros: "+err.Error())
 		return
 	}
+	telemetry.LogAction(r.Context(), "categories.list", map[string]any{"count": len(cats)})
 	writeJSON(w, http.StatusOK, cats)
 }
 
@@ -314,13 +368,19 @@ func (h *APIHandler) handleDiagnosticSuggestion(w http.ResponseWriter, r *http.R
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	res, err := h.store.SuggestCategoryByProblem(r.Context(), body.Problem)
 	if err != nil {
+		telemetry.LogError(r.Context(), "diagnostic.suggest", err, map[string]any{"problem": body.Problem})
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	telemetry.LogAction(r.Context(), "diagnostic.suggest", map[string]any{
+		"problem":            body.Problem,
+		"suggested_category": res.SuggestedCategory.Slug,
+	})
 	writeJSON(w, http.StatusOK, res)
 }
 
 func (h *APIHandler) handleListProfessionals(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	q := r.URL.Query()
 	catID, _ := strconv.Atoi(q.Get("category_id"))
 	lat, _ := strconv.ParseFloat(q.Get("lat"), 64)
@@ -338,9 +398,25 @@ func (h *APIHandler) handleListProfessionals(w http.ResponseWriter, r *http.Requ
 
 	pros, err := h.store.ListProfessionals(r.Context(), filter)
 	if err != nil {
+		telemetry.LogError(r.Context(), "professionals.search_postgis", err, map[string]any{
+			"category_id": filter.CategoryID,
+			"query":       filter.SearchQuery,
+		})
 		writeError(w, http.StatusInternalServerError, "Error al buscar profesionales: "+err.Error())
 		return
 	}
+
+	elapsed := time.Since(start)
+	h.metrics.RecordPostGISSearch(filter.CategoryID, filter.OnlyUrgent, filter.OnlyLicensed, len(pros), elapsed)
+	telemetry.LogAction(r.Context(), "professionals.search_postgis", map[string]any{
+		"category_id":   filter.CategoryID,
+		"query":         filter.SearchQuery,
+		"only_urgent":   filter.OnlyUrgent,
+		"only_licensed": filter.OnlyLicensed,
+		"results_count": len(pros),
+		"duration_ms":   fmt.Sprintf("%.2f", float64(elapsed.Microseconds())/1000.0),
+	})
+
 	writeJSON(w, http.StatusOK, pros)
 }
 
@@ -348,9 +424,15 @@ func (h *APIHandler) handleGetProfessional(w http.ResponseWriter, r *http.Reques
 	id := r.PathValue("id")
 	prof, err := h.store.GetProfessionalByID(r.Context(), id)
 	if err != nil {
+		telemetry.LogError(r.Context(), "professionals.get_detail", err, map[string]any{"professional_id": id})
 		writeError(w, http.StatusNotFound, "Profesional no encontrado")
 		return
 	}
+	telemetry.LogAction(r.Context(), "professionals.get_detail", map[string]any{
+		"professional_id": prof.ID,
+		"full_name":       prof.FullName,
+		"rating_avg":      prof.RatingAvg,
+	})
 	writeJSON(w, http.StatusOK, prof)
 }
 
@@ -369,9 +451,18 @@ func (h *APIHandler) handleCreateRequest(w http.ResponseWriter, r *http.Request)
 	}
 	req, err := h.store.CreateServiceRequest(r.Context(), input)
 	if err != nil {
+		telemetry.LogError(r.Context(), "requests.create", err, map[string]any{"professional_id": input.ProfessionalID})
 		writeError(w, http.StatusInternalServerError, "No se pudo registrar la solicitud: "+err.Error())
 		return
 	}
+	h.metrics.RecordServiceRequestCreated(req.CategoryID, req.Urgency, req.ContactChannel)
+	telemetry.LogAction(r.Context(), "requests.create", map[string]any{
+		"request_id":      req.ID,
+		"professional_id": req.ProfessionalID,
+		"client_name":     req.ClientName,
+		"urgency":         req.Urgency,
+		"channel":         req.ContactChannel,
+	})
 	writeJSON(w, http.StatusCreated, req)
 }
 
@@ -382,6 +473,7 @@ func (h *APIHandler) handleListRequests(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "Error al listar solicitudes: "+err.Error())
 		return
 	}
+	telemetry.LogAction(r.Context(), "requests.list", map[string]any{"professional_id": profID, "count": len(list)})
 	writeJSON(w, http.StatusOK, list)
 }
 
@@ -395,6 +487,7 @@ func (h *APIHandler) handleListMyClientRequests(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "Error al listar tus solicitudes: "+err.Error())
 		return
 	}
+	telemetry.LogAction(r.Context(), "requests.list_client", map[string]any{"client_id": clientID, "count": len(list)})
 	writeJSON(w, http.StatusOK, list)
 }
 
@@ -405,6 +498,7 @@ func (h *APIHandler) handleGetRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Solicitud no encontrada")
 		return
 	}
+	telemetry.LogAction(r.Context(), "requests.get", map[string]any{"request_id": req.ID, "status": req.Status})
 	writeJSON(w, http.StatusOK, req)
 }
 
@@ -421,9 +515,17 @@ func (h *APIHandler) handleCreateReview(w http.ResponseWriter, r *http.Request) 
 	}
 	rev, err := h.store.CreateReview(r.Context(), reqID, input)
 	if err != nil {
+		telemetry.LogError(r.Context(), "reviews.create_transactional", err, map[string]any{"request_id": reqID})
 		writeError(w, http.StatusInternalServerError, "No se pudo guardar la calificación: "+err.Error())
 		return
 	}
+	h.metrics.RecordReviewSubmitted(reqID, input.Rating)
+	telemetry.LogAction(r.Context(), "reviews.create_transactional", map[string]any{
+		"review_id":  rev.ID,
+		"request_id": reqID,
+		"rating":     rev.Rating,
+		"author":     rev.AuthorName,
+	})
 	writeJSON(w, http.StatusCreated, rev)
 }
 
@@ -436,9 +538,15 @@ func (h *APIHandler) handleUpdateVerification(w http.ResponseWriter, r *http.Req
 	}
 	prof, err := h.store.UpdateProfessionalVerification(r.Context(), profID, input)
 	if err != nil {
+		telemetry.LogError(r.Context(), "professionals.verify_dni_license", err, map[string]any{"professional_id": profID})
 		writeError(w, http.StatusNotFound, "Profesional no encontrado: "+err.Error())
 		return
 	}
+	telemetry.LogAction(r.Context(), "professionals.verify_dni_license", map[string]any{
+		"professional_id": profID,
+		"is_dni_verified": prof.IsDNIVerified,
+		"is_licensed":     prof.IsLicensed,
+	})
 	writeJSON(w, http.StatusOK, prof)
 }
 
@@ -451,9 +559,15 @@ func (h *APIHandler) handleUpdateAvailability(w http.ResponseWriter, r *http.Req
 	}
 	prof, err := h.store.UpdateProfessionalAvailability(r.Context(), profID, input)
 	if err != nil {
+		telemetry.LogError(r.Context(), "professionals.toggle_availability", err, map[string]any{"professional_id": profID})
 		writeError(w, http.StatusNotFound, "Profesional no encontrado: "+err.Error())
 		return
 	}
+	h.metrics.RecordAvailabilityToggle(input.IsAvailableNow)
+	telemetry.LogAction(r.Context(), "professionals.toggle_availability", map[string]any{
+		"professional_id":  profID,
+		"is_available_now": prof.IsAvailableNow,
+	})
 	writeJSON(w, http.StatusOK, prof)
 }
 
@@ -461,9 +575,15 @@ func (h *APIHandler) handleGetProfessionalDashboard(w http.ResponseWriter, r *ht
 	profID := r.PathValue("id")
 	dash, err := h.store.GetProfessionalDashboard(r.Context(), profID)
 	if err != nil {
+		telemetry.LogError(r.Context(), "professionals.get_dashboard", err, map[string]any{"professional_id": profID})
 		writeError(w, http.StatusNotFound, "Panel profesional no encontrado: "+err.Error())
 		return
 	}
+	telemetry.LogAction(r.Context(), "professionals.get_dashboard", map[string]any{
+		"professional_id": profID,
+		"active_requests": len(dash.ActiveRequests),
+		"new_today":       dash.NewTodayCount,
+	})
 	writeJSON(w, http.StatusOK, dash)
 }
 
@@ -471,7 +591,8 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Trace-ID, X-Request-ID, x-datadog-trace-id")
+	w.Header().Set("Access-Control-Expose-Headers", "X-Trace-ID, X-Datadog-Trace-ID")
 	w.WriteHeader(status)
 	if payload != nil {
 		_ = json.NewEncoder(w).Encode(payload)

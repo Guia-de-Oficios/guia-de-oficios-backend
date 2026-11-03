@@ -13,6 +13,7 @@ import (
 
 	"guiaoficios/backend/internal/handlers"
 	"guiaoficios/backend/internal/repository"
+	"guiaoficios/backend/internal/telemetry"
 )
 
 func main() {
@@ -55,6 +56,9 @@ func main() {
 	store := repository.NewPostgresStore(db)
 	storageMode := "postgresql+postgis"
 
+	// Inicializar recolector de métricas clave para Datadog (DogStatsD UDP)
+	_ = telemetry.GetMetrics()
+
 	mux := http.NewServeMux()
 	apiHandler := handlers.NewAPIHandler(store, storageMode, uploadDir)
 	apiHandler.RegisterRoutes(mux)
@@ -70,6 +74,8 @@ func main() {
 	log.Printf("=======================================================================")
 	log.Printf("🚀 Servidor 'Guía de Oficios' escuchando en http://localhost:%s", port)
 	log.Printf("📦 Motor de Base de Datos:   %s (100%% persistencia real, sin mocks)", storageMode)
+	log.Printf("🔍 Trazabilidad Activa:      Header X-Trace-ID / X-Datadog-Trace-ID en cada request")
+	log.Printf("📊 Métricas Clave Datadog:   DogStatsD UDP + http://localhost:%s/api/v1/metrics", port)
 	log.Printf("📂 Directorio de Uploads:    %s (/uploads/)", uploadDir)
 	log.Printf("🎨 Interfaz Stitch Original: http://localhost:%s/ui/app.html", port)
 	log.Printf("🔗 Health Check:             http://localhost:%s/api/v1/health", port)
@@ -79,7 +85,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:         ":" + port,
-		Handler:      mux,
+		Handler:      telemetry.ObservabilityMiddleware(mux),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 	}

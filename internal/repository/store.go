@@ -12,6 +12,7 @@ import (
 
 	"guiaoficios/backend/internal/auth"
 	"guiaoficios/backend/internal/models"
+	"guiaoficios/backend/internal/telemetry"
 )
 
 var (
@@ -339,6 +340,7 @@ func (s *PostgresStore) SuggestCategoryByProblem(ctx context.Context, problem st
 
 // ListProfessionals ejecuta la búsqueda 100% SQL + PostGIS real (GDO-14).
 func (s *PostgresStore) ListProfessionals(ctx context.Context, f ProfessionalFilter) ([]models.ProfessionalSummary, error) {
+	sqlStart := time.Now()
 	refLat := f.Lat
 	refLng := f.Lng
 	if refLat == 0 || refLng == 0 {
@@ -417,6 +419,12 @@ func (s *PostgresStore) ListProfessionals(ctx context.Context, f ProfessionalFil
 		item.RatingLabel = formatRatingLabel(item.RatingAvg)
 		list = append(list, item)
 	}
+	telemetry.LogAction(ctx, "sql.postgis.st_dwithin_query", map[string]any{
+		"ref_lat":    refLat,
+		"ref_lng":    refLng,
+		"rows":       len(list),
+		"sql_time_ms": fmt.Sprintf("%.2f", float64(time.Since(sqlStart).Microseconds())/1000.0),
+	})
 	return list, rows.Err()
 }
 
