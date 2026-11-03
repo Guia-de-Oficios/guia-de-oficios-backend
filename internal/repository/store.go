@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +18,7 @@ import (
 
 var (
 	ErrEmailAlreadyExists = errors.New("el correo electrónico ya está registrado")
-	ErrInvalidCredentials = errors.New("correo o contraseña incorrectos")
+	ErrInvalidCredentials = errors.New("correo/teléfono o contraseña incorrectos")
 	ErrReviewAlreadyDone  = errors.New("esta solicitud ya fue calificada")
 )
 
@@ -159,7 +160,7 @@ func (s *PostgresStore) RegisterUser(ctx context.Context, input models.RegisterU
 	return &u, nil
 }
 
-func (s *PostgresStore) AuthenticateUser(ctx context.Context, email, password string) (*models.User, error) {
+func (s *PostgresStore) AuthenticateUser(ctx context.Context, identifier, password string) (*models.User, error) {
 	var u models.User
 	var pwdHash sql.NullString
 	var profID sql.NullString
@@ -171,7 +172,12 @@ func (s *PostgresStore) AuthenticateUser(ctx context.Context, email, password st
 		FROM users u
 		LEFT JOIN professional_profiles p ON p.user_id = u.id
 		WHERE LOWER(u.email) = LOWER(TRIM($1))
-	`, email).Scan(
+		   OR (
+		       LENGTH(REGEXP_REPLACE($1, '[^0-9]', '', 'g')) >= 6
+		       AND RIGHT(REGEXP_REPLACE(u.phone, '[^0-9]', '', 'g'), 8) = RIGHT(REGEXP_REPLACE($1, '[^0-9]', '', 'g'), 8)
+		   )
+		LIMIT 1
+	`, identifier).Scan(
 		&u.ID, &u.FullName, &u.Email, &u.Phone, &u.Role, &u.AuthProvider,
 		&u.SavedAddress, &u.SavedLat, &u.SavedLng, &pwdHash, &u.CreatedAt, &profID,
 	)
@@ -191,11 +197,35 @@ func (s *PostgresStore) AuthenticateUser(ctx context.Context, email, password st
 }
 
 func (s *PostgresStore) AuthenticateGoogle(ctx context.Context, input models.GoogleAuthInput) (*models.User, error) {
-	if input.Email == "" {
-		input.Email = "vecino.google@guiaoficios.ar"
+	// Si viene un id_token JWT de Google, extraemos email y nombre del payload si no vinieron explícitos
+	if strings.TrimSpace(input.IDToken) != "" && (strings.TrimSpace(input.Email) == "" || strings.TrimSpace(input.FullName) == "") {
+		parts := strings.Split(strings.TrimSpace(input.IDToken), ".")
+		if len(parts) == 3 {
+			if payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
+				var claims struct {
+					Email string `json:"email"`
+					Name  string `json:"name"`
+				}
+				if json.Unmarshal(payloadBytes, &claims) == nil {
+					if strings.TrimSpace(input.Email) == "" && claims.Email != "" {
+						input.Email = claims.Email
+					}
+					if strings.TrimSpace(input.FullName) == "" && claims.Name != "" {
+						input.FullName = claims.Name
+					}
+				}
+			}
+		}
+	}
+
+	input.Email = strings.TrimSpace(input.Email)
+	input.FullName = strings.TrimSpace(input.FullName)
+	if input.Email == "" || !strings.Contains(input.Email, "@") {
+		return nil, errors.New("se requiere un correo de Google válido")
 	}
 	if input.FullName == "" {
-		input.FullName = "Vecino Google"
+		localPart := strings.Split(input.Email, "@")[0]
+		input.FullName = strings.Title(strings.ReplaceAll(strings.ReplaceAll(localPart, ".", " "), "_", " "))
 	}
 	if input.Role == "" {
 		input.Role = "client"
@@ -220,12 +250,16 @@ func (s *PostgresStore) AuthenticateGoogle(ctx context.Context, input models.Goo
 		return &u, nil
 	}
 
-	// Si no existe, lo registramos con auth_provider = "google"
+	// Si no existe, lo registramos en PostgreSQL con auth_provider = "google"
+	pwdSeed := input.IDToken
+	if pwdSeed == "" {
+		pwdSeed = "google-oauth-" + input.Email
+	}
 	return s.RegisterUser(ctx, models.RegisterUserInput{
 		FullName:     input.FullName,
 		Email:        input.Email,
 		Phone:        input.Phone,
-		Password:     input.IDToken,
+		Password:     pwdSeed,
 		Role:         input.Role,
 		AuthProvider: "google",
 	})

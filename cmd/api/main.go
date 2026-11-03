@@ -63,21 +63,12 @@ func main() {
 	apiHandler := handlers.NewAPIHandler(store, storageMode, uploadDir)
 	apiHandler.RegisterRoutes(mux)
 
-	// Servir la interfaz Stitch intacta desde ../ui-stitch o ./ui-stitch
-	uiDir := filepath.Clean("../ui-stitch")
-	if _, err := os.Stat(uiDir); os.IsNotExist(err) {
-		uiDir = filepath.Clean("ui-stitch")
-	}
-	fs := http.FileServer(http.Dir(uiDir))
-	mux.Handle("/ui/", http.StripPrefix("/ui/", fs))
-
 	log.Printf("=======================================================================")
-	log.Printf("🚀 Servidor 'Guía de Oficios' escuchando en http://localhost:%s", port)
+	log.Printf("🚀 API REST 'Guía de Oficios' escuchando en http://localhost:%s", port)
 	log.Printf("📦 Motor de Base de Datos:   %s (100%% persistencia real, sin mocks)", storageMode)
 	log.Printf("🔍 Trazabilidad Activa:      Header X-Trace-ID / X-Datadog-Trace-ID en cada request")
 	log.Printf("📊 Métricas Clave Datadog:   DogStatsD UDP + http://localhost:%s/api/v1/metrics", port)
 	log.Printf("📂 Directorio de Uploads:    %s (/uploads/)", uploadDir)
-	log.Printf("🎨 Interfaz Stitch Original: http://localhost:%s/ui/app.html", port)
 	log.Printf("🔗 Health Check:             http://localhost:%s/api/v1/health", port)
 	log.Printf("🔗 API Rubros:               http://localhost:%s/api/v1/categories", port)
 	log.Printf("🔗 API Profesionales:        http://localhost:%s/api/v1/professionals", port)

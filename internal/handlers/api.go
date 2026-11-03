@@ -144,6 +144,10 @@ func (h *APIHandler) handleRegisterUser(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "Nombre completo y correo electrónico son obligatorios")
 		return
 	}
+	if input.AuthProvider != "google" && len(strings.TrimSpace(input.Password)) < 6 {
+		writeError(w, http.StatusBadRequest, "La contraseña debe tener al menos 6 números o letras")
+		return
+	}
 	user, err := h.store.RegisterUser(r.Context(), input)
 	if err != nil {
 		h.metrics.RecordAuthEvent("register", input.Role, false)
@@ -171,13 +175,13 @@ func (h *APIHandler) handleLoginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(input.Email) == "" || strings.TrimSpace(input.Password) == "" {
-		writeError(w, http.StatusBadRequest, "Ingresá tu correo electrónico y tu contraseña")
+		writeError(w, http.StatusBadRequest, "Ingresá tu correo electrónico o teléfono y tu contraseña")
 		return
 	}
 	user, err := h.store.AuthenticateUser(r.Context(), input.Email, input.Password)
 	if err != nil {
 		h.metrics.RecordAuthEvent("login", "unknown", false)
-		telemetry.LogError(r.Context(), "auth.login", err, map[string]any{"email": input.Email})
+		telemetry.LogError(r.Context(), "auth.login", err, map[string]any{"identifier": input.Email})
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
@@ -221,45 +225,36 @@ func (h *APIHandler) handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandler) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
-	if claims := getClaims(r); claims != nil && claims.UserID != "" {
-		user, err := h.store.GetUserByID(r.Context(), claims.UserID)
-		if err == nil {
-			telemetry.LogAction(r.Context(), "users.get_me", map[string]any{"user_id": user.ID, "source": "jwt"})
-			writeJSON(w, http.StatusOK, user)
-			return
-		}
+	claims := getClaims(r)
+	if claims == nil || claims.UserID == "" {
+		writeError(w, http.StatusUnauthorized, "Sesión no iniciada o token inválido")
+		return
 	}
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		role := r.URL.Query().Get("role")
-		if role == "professional" {
-			userID = "22222222-2222-2222-2222-222222222222"
-		} else {
-			userID = "11111111-1111-1111-1111-111111111111"
-		}
-	}
-	user, err := h.store.GetUserByID(r.Context(), userID)
+	user, err := h.store.GetUserByID(r.Context(), claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Usuario no encontrado")
 		return
 	}
-	telemetry.LogAction(r.Context(), "users.get_me", map[string]any{"user_id": user.ID, "source": "query"})
+	telemetry.LogAction(r.Context(), "users.get_me", map[string]any{"user_id": user.ID, "source": "jwt"})
 	writeJSON(w, http.StatusOK, user)
 }
 
 func (h *APIHandler) handleUpdateUserAddress(w http.ResponseWriter, r *http.Request) {
+	claims := getClaims(r)
+	if claims == nil || claims.UserID == "" {
+		writeError(w, http.StatusUnauthorized, "Debés iniciar sesión para actualizar tu dirección")
+		return
+	}
 	var input models.UpdateAddressInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "Datos de dirección inválidos")
 		return
 	}
-	userID := r.URL.Query().Get("user_id")
-	if claims := getClaims(r); claims != nil && claims.UserID != "" {
-		userID = claims.UserID
+	if strings.TrimSpace(input.SavedAddress) == "" {
+		writeError(w, http.StatusBadRequest, "La dirección no puede estar vacía")
+		return
 	}
-	if userID == "" {
-		userID = "11111111-1111-1111-1111-111111111111"
-	}
+	userID := claims.UserID
 	user, err := h.store.UpdateUserAddress(r.Context(), userID, input)
 	if err != nil {
 		telemetry.LogError(r.Context(), "users.update_address", err, map[string]any{"user_id": userID})

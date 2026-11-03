@@ -32,6 +32,9 @@ services:
       DATABASE_URL: "postgres://guia_user:guia_password@postgres:5432/guia_oficios?sslmode=disable"
       JWT_SECRET: "guia-de-oficios-jwt-secret-mvp-2026"
       UPLOAD_DIR: "/app/uploads"
+      DD_SERVICE: "guia-de-oficios-api"
+      DD_ENV: "dev"
+      DD_VERSION: "1.0.0-mvp"
     ports:
       - "8080:8080"
     volumes:
