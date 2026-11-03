@@ -1,5 +1,5 @@
 -- =============================================================================
--- Guía de Oficios — Datos Iniciales Exactos de las Pantallas Stitch
+-- Guía de Oficios — Datos Iniciales Reales en PostgreSQL + PostGIS (GDO-9)
 -- =============================================================================
 
 INSERT INTO categories (id, slug, name, helper_examples, icon_name, badge_text, badge_type, display_order) VALUES
@@ -13,14 +13,14 @@ INSERT INTO categories (id, slug, name, helper_examples, icon_name, badge_text, 
 (8, 'cerrajero', 'Cerrajero', 'Cerraduras y puertas', 'key', 'Urgencias', 'urgent', 8)
 ON CONFLICT (id) DO NOTHING;
 
--- Usuarios (María Elena Castro como Vecina Activa, Roberto Carlos Gómez y Martín Edgardo Silva como Profesionales)
-INSERT INTO users (id, full_name, email, phone, auth_provider, saved_address, role) VALUES
-('00000000-0000-0000-0000-000000000001', 'María Elena Castro', 'maria.castro@vecinos.ar', '11 5544-3322', 'manual', 'Av. Rivadavia 5420, Caballito', 'client'),
-('11111111-1111-1111-1111-111111111111', 'Roberto Carlos Gómez', 'roberto.gomez@guiaoficios.ar', '+5491145890000', 'manual', 'Caballito, CABA', 'professional'),
-('22222222-2222-2222-2222-222222222222', 'Martín Edgardo Silva', 'martin.silva@guiaoficios.ar', '+5491155667788', 'manual', 'Caballito, CABA', 'professional')
+-- Usuarios iniciales (contraseña por defecto: "123456")
+INSERT INTO users (id, full_name, email, phone, auth_provider, saved_address, saved_lat, saved_lng, role) VALUES
+('00000000-0000-0000-0000-000000000001', 'María Elena Castro', 'maria.castro@vecinos.ar', '11 5544-3322', 'manual', 'Av. Rivadavia 5420, Caballito', -34.6186, -58.4368, 'client'),
+('11111111-1111-1111-1111-111111111111', 'Roberto Carlos Gómez', 'roberto.gomez@guiaoficios.ar', '+5491145890000', 'manual', 'Caballito, CABA', -34.6150, -58.4330, 'professional'),
+('22222222-2222-2222-2222-222222222222', 'Martín Edgardo Silva', 'martin.silva@guiaoficios.ar', '+5491155667788', 'manual', 'Caballito, CABA', -34.6110, -58.4420, 'professional')
 ON CONFLICT (id) DO NOTHING;
 
--- Perfiles de Profesionales (Roberto Carlos Gómez y Martín Edgardo Silva)
+-- Perfiles de Profesionales
 INSERT INTO professional_profiles (
     id, user_id, primary_category_id, trade_title, specialties, bio, years_experience,
     guarantee_percentage, neighborhood, coverage_radius_km, base_location,
@@ -39,9 +39,9 @@ INSERT INTO professional_profiles (
     100,
     'Caballito y Flores',
     5,
-    ST_SetSRID(ST_MakePoint(-58.4368, -34.6186), 4326)::geography,
+    ST_SetSRID(ST_MakePoint(-58.4330, -34.6150), 4326)::geography,
     TRUE, TRUE, TRUE, TRUE,
-    'Matrícula N° 48.912', 'Metrogas / ENARGAS', 'verified', 12000, '$12.000',
+    'Matrícula oficial N° 48.912 verificada', 'Metrogas / ENARGAS', 'verified', 12000, '$12.000',
     4.90, 142, 142, 18
 ),
 (
@@ -63,9 +63,10 @@ INSERT INTO professional_profiles (
 ON CONFLICT (id) DO NOTHING;
 
 -- Trabajos realizados de Roberto Carlos Gómez
-INSERT INTO portfolio_items (professional_id, title, subtitle, image_url, is_verified) VALUES
-('aaaa1111-1111-1111-1111-111111111111', 'Canilla monocomando cambiada', 'Instalación y sellado completo', 'https://lh3.googleusercontent.com/aida-public/AB6AXuCh10RiTc50jP69tmrjG8REQ7uQZftm52vnIAc3RMhe3SukIRmt1qsbmlKpf6XUc585FmJriOr-k8Z0QvUfu8A7nNCkOGW2jJx3avdmiKF-Nkrta-clOO_eVsmwIDHmRz30tgPahuYwFtN8PQ1fyh9hPzU65q3-IQsxo-p-0lExk7Sal_lolRdoZ-44c8UC0ZDRI9Y7OqNDb2WZlr5Ly30L2CAZmaoIXjO55wdLSbRG', TRUE),
-('aaaa1111-1111-1111-1111-111111111111', 'Reparación de cañería termofusión', 'Solución definitiva a filtración', 'https://lh3.googleusercontent.com/aida-public/AB6AXuCTODIWHLBehXm6SVzYW9pLhJ4C1zuw4YW31S21vmoWs31kV-fwgGBcwNkWLWT8eQAC0le8E2mTVOCpr78K1LSgHxq1Wz_TIbADpF91xbBHUTJEVtBkUGHSa_saUCNhM56oSA0exrcwQueuH6FVaBDeEcWP8z0qj_SvfAmVejvoezsktrrA52SZpDaRBLiNFN1lS3RBFovpPsOpuNUk6SDaVRHc2VbiBDJKWl6kekvw', TRUE);
+INSERT INTO portfolio_items (id, professional_id, title, subtitle, image_url, is_verified) VALUES
+('dddd1111-1111-1111-1111-111111111111', 'aaaa1111-1111-1111-1111-111111111111', 'Canilla monocomando cambiada', 'Instalación y sellado completo', 'https://lh3.googleusercontent.com/aida-public/AB6AXuCh10RiTc50jP69tmrjG8REQ7uQZftm52vnIAc3RMhe3SukIRmt1qsbmlKpf6XUc585FmJriOr-k8Z0QvUfu8A7nNCkOGW2jJx3avdmiKF-Nkrta-clOO_eVsmwIDHmRz30tgPahuYwFtN8PQ1fyh9hPzU65q3-IQsxo-p-0lExk7Sal_lolRdoZ-44c8UC0ZDRI9Y7OqNDb2WZlr5Ly30L2CAZmaoIXjO55wdLSbRG', TRUE),
+('dddd2222-2222-2222-2222-222222222222', 'aaaa1111-1111-1111-1111-111111111111', 'Reparación de cañería termofusión', 'Solución definitiva a filtración', 'https://lh3.googleusercontent.com/aida-public/AB6AXuCTODIWHLBehXm6SVzYW9pLhJ4C1zuw4YW31S21vmoWs31kV-fwgGBcwNkWLWT8eQAC0le8E2mTVOCpr78K1LSgHxq1Wz_TIbADpF91xbBHUTJEVtBkUGHSa_saUCNhM56oSA0exrcwQueuH6FVaBDeEcWP8z0qj_SvfAmVejvoezsktrrA52SZpDaRBLiNFN1lS3RBFovpPsOpuNUk6SDaVRHc2VbiBDJKWl6kekvw', TRUE)
+ON CONFLICT (id) DO NOTHING;
 
 -- Solicitudes recibidas en el Panel Profesional de Roberto
 INSERT INTO service_requests (
@@ -73,7 +74,7 @@ INSERT INTO service_requests (
     professional_id, category_id, urgency, problem_description, photo_url, status, scheduled_note
 ) VALUES
 (
-    'req-1111-1111-1111-111111111111',
+    'eeee1111-1111-1111-1111-111111111111',
     '00000000-0000-0000-0000-000000000001',
     'María Elena Castro',
     '11 5544-3322',
@@ -88,7 +89,7 @@ INSERT INTO service_requests (
     NULL
 ),
 (
-    'req-2222-2222-2222-222222222222',
+    'eeee2222-2222-2222-2222-222222222222',
     NULL,
     'Jorge Benítez',
     '11 6677-8899',
@@ -105,12 +106,14 @@ INSERT INTO service_requests (
 ON CONFLICT (id) DO NOTHING;
 
 -- Reseñas de vecinos en el perfil de Roberto
-INSERT INTO reviews (professional_id, author_name, author_zone, rating, highlights, comment) VALUES
+INSERT INTO reviews (id, professional_id, author_name, author_zone, rating, highlights, comment) VALUES
 (
+    'ffff1111-1111-1111-1111-111111111111',
     'aaaa1111-1111-1111-1111-111111111111',
     'Graciela M.',
     'Vecina de Caballito (Av. Pedro Goyena)',
     5,
     '["Puntualidad", "Precio justo", "Honestidad y prolijidad", "Excelente atención", "Solución en el acto"]'::jsonb,
     'Vino puntual a la hora acordada, resolvió la pérdida del baño en el acto y dejó todo impecable. Muy respetuoso.'
-);
+)
+ON CONFLICT (id) DO NOTHING;
