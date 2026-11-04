@@ -1,7 +1,7 @@
-# Guía de Trabajo Colaborativo y Reparto de Tareas por Etapas — "Guía de Oficios"
+# Guía de Trabajo Colaborativo y Reparto de Tareas por Pasos — "Guía de Oficios"
 
 > [!NOTE]
-> Este documento está diseñado para que ambos integrantes del equipo tengan claridad total sobre cómo se estructura la organización **[Guia-de-Oficios](https://github.com/orgs/Guia-de-Oficios/repositories)**, cómo levantar el entorno local sin saturar la memoria RAM (usando **Docker** para el Backend + PostGIS y **Wi-Fi ADB / Teléfono Físico** para Android Studio), y cómo avanzar etapa por etapa sin usar mocks.
+> Este documento está diseñado para que ambos integrantes del equipo tengan claridad total sobre cómo se estructura la organización **[Guia-de-Oficios](https://github.com/orgs/Guia-de-Oficios/repositories)**, cómo levantar el entorno local sin saturar la memoria RAM (usando **Docker** para el Backend + PostGIS y **Wi-Fi ADB / Teléfono Físico** para Android Studio), y cómo avanzar paso a paso sin usar mocks siguiendo el plan de 14 pasos.
 
 ---
 
@@ -13,9 +13,9 @@ El proyecto está dividido en **3 repositorios oficiales** dentro de `https://gi
 | :--- | :--- | :--- |
 | **[`guia-de-oficios-backend`](https://github.com/Guia-de-Oficios/guia-de-oficios-backend)** | API REST pura en **Golang** (sin HTML ni mocks), migraciones y semillas de **PostgreSQL 16 + PostGIS**, `Dockerfile` + `docker-compose.yml` y tests unitarios. | **Docker Compose** (o GoLand solo cuando se edita código Go) |
 | **[`guia-de-oficios-android`](https://github.com/Guia-de-Oficios/guia-de-oficios-android)** | Aplicación móvil nativa Android en **Kotlin + Jetpack Compose**, cliente Retrofit (`GuiaDeOficiosApi`), persistencia JWT en `DataStore` y pantallas 1:1 con Stitch. | **Android Studio (JBR 21 + Gradle 8.13)** |
-| **[`guia-de-oficios-docs-ui`](https://github.com/Guia-de-Oficios/guia-de-oficios-docs-ui)** | Las **15 pantallas y activos originales exportados de Stitch** (`code.html` + `screen.png`), el sistema de diseño `DESIGN.md` y la documentación maestra de Producto, Etapas y Negocio. | **VS Code / Navegador** |
+| **[`guia-de-oficios-docs-ui`](https://github.com/Guia-de-Oficios/guia-de-oficios-docs-ui)** | Las **15 pantallas y activos originales exportados de Stitch** (`code.html` + `screen.png`), el sistema de diseño `DESIGN.md` y la documentación maestra de Producto, Pasos y Negocio. | **VS Code / Navegador** |
 
-*(Cada repositorio mantiene sincronizada su carpeta `/docs`, incluyendo **[`docs/06_plan_etapas_funcionales_y_tareas.md`](06_plan_etapas_funcionales_y_tareas.md)** con el checklist de tareas de cada etapa).*
+*(Cada repositorio mantiene sincronizada su carpeta `/docs`, incluyendo **[`docs/06_radiografia_vistas_y_plan_paso_a_paso.md`](06_radiografia_vistas_y_plan_paso_a_paso.md)** con el checklist de tareas de cada paso).*
 
 ---
 
@@ -43,21 +43,32 @@ En lugar de levantar un emulador pesado de 3 GB de RAM:
 
 ---
 
-## 3. División del Trabajo en las 4 Etapas Funcionales
+## 3. División del Trabajo en los 14 Pasos Secuenciales
 
-El detalle completo de tareas con sus códigos (`[ETAPA2-BE-01]`, `[ETAPA2-AND-01]`, etc.) se encuentra en **[`docs/06_plan_etapas_funcionales_y_tareas.md`](06_plan_etapas_funcionales_y_tareas.md)**:
+El detalle completo de tareas con sus códigos (`[BE-1.5]`, `[AND-1.1]`, etc.) se encuentra en **[`docs/06_radiografia_vistas_y_plan_paso_a_paso.md`](06_radiografia_vistas_y_plan_paso_a_paso.md)**:
 
-* ✅ **Etapa 1 (Completada):** Identidad (`logo_provisional_gdo`), Bienvenida y Login con Google/Correo/Teléfono (`bienvenida_y_selecci_n_de_rol`), Registro Manual y Google (`registro_google_o_manual`), Inicio del Cliente y 8 Categorías (`cliente_inicio_y_categor_as`) + Pantalla `Mi Cuenta` con cierre de sesión real.
-* 🔜 **Etapa 2 (En curso para continuar):** Resultados de búsqueda geoespacial con PostGIS (`cliente_resultados_de_profesionales`), Perfil completo del Profesional con galería Coil (`cliente_perfil_del_profesional_y_contacto`) y Cuadro de Honor mensual (`comunidad_top_profesionales_del_mes`).
-* ⏳ **Etapa 3:** Solicitud Guiada con foto real (`cliente_solicitud_guiada_a_roberto`), Confirmación y contacto WhatsApp/Llamada (`cliente_elegir_contacto_y_confirmaci_n`), Seguimiento en vivo en mapa (`cliente_profesional_en_camino_y_mapa_en_vivo`) y Calificación transaccional (`cliente_trabajo_terminado_y_calificaci_n`).
-* ⏳ **Etapa 4:** Registro y Verificación DNI + Matrícula del Profesional (`profesional_registro_y_verificaci_n_dni`), Panel de Solicitudes Recibidas (`profesional_panel_y_solicitudes_recibidas`) y Aceptar Trabajo / Iniciar Viaje (`profesional_aceptar_trabajo_e_iniciar_viaje`).
+* **Paso 1:** Modularización de Pantallas, Selector de Rol Inicial y Login Bien Hecho (Vistas #1, #2 y #8).
+* **Paso 2:** Registro Manual Completo, Dirección Barrial y Google Auth Seguro (Vista #3).
+* **Paso 3:** Redirección Inteligente por Rol, Sesión JWT y Blindaje de Endpoints.
+* **Paso 4:** Barra Superior, Barra Inferior y Pantalla 'Mi Cuenta' Diferenciada por Rol.
+* **Paso 5:** Home del Vecino, Diagnóstico Inteligente y Semilla de los 8 Rubros (Vista #4).
+* **Paso 6:** Pantalla de Resultados PostGIS 1:1 con Stitch (Vista #5).
+* **Paso 7:** Ficha Completa del Profesional y Galería de Fotos Antes/Después (Vista #6).
+* **Paso 8:** Pantalla Comunidad: Top Profesionales del Mes / Podio Barrial (Vista #7).
+* **Paso 9:** Solicitud Guiada (Paso 1 de 2) 1:1 con Stitch y Foto con Preview (Vista #9).
+* **Paso 10:** Confirmación de Solicitud (Paso 2 de 2) y Disparo a WhatsApp / Teléfono (Vista #10).
+* **Paso 11:** Seguimiento en Vivo con Mapa y Pestaña 'Mis Contactos' (Vista #11).
+* **Paso 12:** Trabajo Terminado y Calificación Transaccional 1 a 5 Estrellas (Vista #12).
+* **Paso 13:** Onboarding del Profesional: Rubro, Especialidades y Fotos Reales de DNI/Matrícula (Vista #13).
+* **Paso 14:** Panel del Profesional, Vista 'Aceptar Trabajo e Iniciar Viaje' y APK Final (Vistas #14 y #15).
 
 ---
 
 ## 4. Flujo de Git Acordado
 
 1. **`main`**: Rama estable que siempre compila (`./gradlew assembleDebug` y `go test ./...`).
-2. **Ramas por tarea de etapa (`feature/etapa2-...`)**:
-   * Ejemplo Backend: `git checkout -b feature/etapa2-podio-barrial`
-   * Ejemplo Android: `git checkout -b feature/etapa2-perfil-profesional`
-3. Cada vez que se completa una tarea de la tabla en `06_plan_etapas_funcionales_y_tareas.md`, se marca como `[x]` y se abre Pull Request hacia `main`.
+2. **Regla de oro anti-conflictos:** Refactorizar primero `StitchWorkflowScreens.kt` en archivos individuales (`RoleSelectionScreen.kt`, `WelcomeLoginScreen.kt`, etc.) en el Paso 1 para evitar choques en el monolito de 2250 líneas.
+3. **Ramas exactas por Paso:**
+   * Backend: `feat/paso-XX-...` o `fix/paso-XX-...`
+   * Android: `feat/paso-XX-...` o `fix/paso-XX-...`
+4. Cada vez que se completa un Paso, ambos integrantes verifican que compila y pasa tests, hacen merge a `main`, hacen `git pull` y prueban juntos en el dispositivo antes de iniciar el siguiente Paso.
