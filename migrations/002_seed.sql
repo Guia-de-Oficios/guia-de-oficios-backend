@@ -13,12 +13,17 @@ INSERT INTO categories (id, slug, name, helper_examples, icon_name, badge_text, 
 (8, 'cerrajero', 'Cerrajero', 'Cerraduras y puertas', 'key', 'Urgencias', 'urgent', 8)
 ON CONFLICT (id) DO NOTHING;
 
--- Usuarios iniciales (contraseña por defecto: "123456")
-INSERT INTO users (id, full_name, email, phone, auth_provider, saved_address, saved_lat, saved_lng, role) VALUES
-('00000000-0000-0000-0000-000000000001', 'María Elena Castro', 'maria.castro@vecinos.ar', '11 5544-3322', 'manual', 'Av. Rivadavia 5420, Caballito', -34.6186, -58.4368, 'client'),
-('11111111-1111-1111-1111-111111111111', 'Roberto Carlos Gómez', 'roberto.gomez@guiaoficios.ar', '+5491145890000', 'manual', 'Caballito, CABA', -34.6150, -58.4330, 'professional'),
-('22222222-2222-2222-2222-222222222222', 'Martín Edgardo Silva', 'martin.silva@guiaoficios.ar', '+5491155667788', 'manual', 'Caballito, CABA', -34.6110, -58.4420, 'professional')
-ON CONFLICT (id) DO NOTHING;
+-- Usuarios iniciales (contraseña por defecto: "123456" con hash bcrypt costo 10)
+INSERT INTO users (id, full_name, email, phone, password_hash, auth_provider, saved_address, saved_lat, saved_lng, role) VALUES
+('00000000-0000-0000-0000-000000000001', 'María Elena Castro', 'maria.castro@vecinos.ar', '11 5544-3322', '$2a$10$ykERU2/jYPFXfm2Hi0nQq.AQT.dHyN4HuJK3zIhljOL6Xf.GSKMwS', 'manual', 'Av. Rivadavia 5420, Caballito', -34.6186, -58.4368, 'client'),
+('11111111-1111-1111-1111-111111111111', 'Roberto Carlos Gómez', 'roberto.gomez@guiaoficios.ar', '+5491145890000', '$2a$10$X9j0kHu0e7UmDvcemNqE5ujNhhKppb6coqyKnnkjJKJAMJ2Y8O1D.', 'manual', 'Caballito, CABA', -34.6150, -58.4330, 'professional'),
+('22222222-2222-2222-2222-222222222222', 'Martín Edgardo Silva', 'martin.silva@guiaoficios.ar', '+5491155667788', '$2a$10$DYXz4hs.721eXHdkzox5je3eEtaaxRWe2B3Oq6XfMH4HXbmKr.9fO', 'manual', 'Caballito, CABA', -34.6110, -58.4420, 'professional')
+ON CONFLICT (id) DO UPDATE
+SET password_hash = CASE
+    WHEN users.password_hash IS NULL OR users.password_hash NOT LIKE '$2%'
+    THEN EXCLUDED.password_hash
+    ELSE users.password_hash
+END;
 
 -- Perfiles de Profesionales
 INSERT INTO professional_profiles (

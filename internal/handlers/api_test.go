@@ -298,6 +298,19 @@ func TestStitchFullWorkflowAPI(t *testing.T) {
 		t.Fatalf("esperaba 200 en login, obtuvo %d: %s", recLogin.Code, recLogin.Body.String())
 	}
 
+	// 2b. Login con contraseña incorrecta debe devolver 401 Unauthorized
+	badLoginPayload := models.LoginInput{
+		Email:    "carlos.nuevo@correo.com",
+		Password: "ClaveIncorrecta999",
+	}
+	badLoginBody, _ := json.Marshal(badLoginPayload)
+	reqBadLogin := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(badLoginBody))
+	recBadLogin := httptest.NewRecorder()
+	mux.ServeHTTP(recBadLogin, reqBadLogin)
+	if recBadLogin.Code != http.StatusUnauthorized {
+		t.Fatalf("esperaba 401 en login con clave inválida, obtuvo %d: %s", recBadLogin.Code, recBadLogin.Body.String())
+	}
+
 	// 3. Upload real multipart/form-data (GDO-10)
 	var bodyBuf bytes.Buffer
 	mw := multipart.NewWriter(&bodyBuf)

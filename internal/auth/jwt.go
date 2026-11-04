@@ -2,16 +2,15 @@ package auth
 
 import (
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Claims representa el payload del token JWT de Guía de Oficios.
@@ -94,29 +93,27 @@ func ParseAndVerifyToken(tokenStr string) (*Claims, error) {
 	return &claims, nil
 }
 
-// HashPassword genera un hash seguro con salt aleatorio (formato sha256$salt$hash).
+// BcryptCost define el costo estándar (>= 10) para el hashing bcrypt de contraseñas.
+const BcryptCost = bcrypt.DefaultCost
+
+// HashPassword genera un hash seguro de la contraseña utilizando bcrypt (costo >= 10).
 func HashPassword(password string) (string, error) {
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
+	if strings.TrimSpace(password) == "" {
+		return "", errors.New("la contraseña no puede estar vacía")
+	}
+	hashBytes, err := bcrypt.GenerateFromPassword([]byte(password), BcryptCost)
+	if err != nil {
 		return "", err
 	}
-	saltHex := hex.EncodeToString(salt)
-	sum := sha256.Sum256([]byte(saltHex + ":" + password))
-	return fmt.Sprintf("sha256$%s$%s", saltHex, hex.EncodeToString(sum[:])), nil
+	return string(hashBytes), nil
 }
 
-// VerifyPassword comprueba si una contraseña en texto plano coincide con su hash almacenado.
+// VerifyPassword comprueba si una contraseña en texto plano coincide con su hash bcrypt almacenado.
+// No admite contraseñas sin hash ni puertas traseras para hashes vacíos.
 func VerifyPassword(password, storedHash string) bool {
-	if storedHash == "" {
-		// Usuarios iniciales creados en el seed sin password_hash aceptan "123456"
-		return password == "123456"
-	}
-	parts := strings.Split(storedHash, "$")
-	if len(parts) != 3 || parts[0] != "sha256" {
+	if strings.TrimSpace(storedHash) == "" || strings.TrimSpace(password) == "" {
 		return false
 	}
-	saltHex := parts[1]
-	sum := sha256.Sum256([]byte(saltHex + ":" + password))
-	expected := hex.EncodeToString(sum[:])
-	return hmac.Equal([]byte(expected), []byte(parts[2]))
+	err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password))
+	return err == nil
 }

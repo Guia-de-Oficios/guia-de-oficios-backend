@@ -64,4 +64,13 @@ func TestPostgresStoreLiveIntegration(t *testing.T) {
 		t.Fatalf("error obteniendo dashboard profesional en PostgreSQL: %v", err)
 	}
 	t.Logf("Dashboard profesional OK: %d solicitudes activas", len(dash.ActiveRequests))
+
+	// Verificar autenticación real con hash bcrypt en usuarios semilla
+	robertoUser, err := store.AuthenticateUser(ctx, "roberto.gomez@guiaoficios.ar", "123456")
+	if err != nil || robertoUser.Email != "roberto.gomez@guiaoficios.ar" {
+		t.Fatalf("esperaba login exitoso para roberto.gomez@guiaoficios.ar con bcrypt, err=%v", err)
+	}
+	if _, err := store.AuthenticateUser(ctx, "roberto.gomez@guiaoficios.ar", "clave_incorrecta"); err == nil {
+		t.Fatalf("no debía autenticar con clave incorrecta")
+	}
 }
