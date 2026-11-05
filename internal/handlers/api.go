@@ -140,8 +140,8 @@ func (h *APIHandler) handleRegisterUser(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "Datos de registro inválidos")
 		return
 	}
-	if strings.TrimSpace(input.FullName) == "" || strings.TrimSpace(input.Email) == "" {
-		writeError(w, http.StatusBadRequest, "Nombre completo y correo electrónico son obligatorios")
+	if len(strings.TrimSpace(input.FullName)) < 3 || strings.TrimSpace(input.Email) == "" || !strings.Contains(input.Email, "@") {
+		writeError(w, http.StatusBadRequest, "Nombre completo (mínimo 3 letras) y correo electrónico válido son obligatorios")
 		return
 	}
 	if input.AuthProvider != "google" && len(strings.TrimSpace(input.Password)) < 6 {
@@ -157,9 +157,13 @@ func (h *APIHandler) handleRegisterUser(w http.ResponseWriter, r *http.Request) 
 	}
 	h.metrics.RecordAuthEvent("register", user.Role, true)
 	telemetry.LogAction(r.Context(), "auth.register", map[string]any{
-		"user_id": user.ID,
-		"email":   user.Email,
-		"role":    user.Role,
+		"user_id":         user.ID,
+		"email":           user.Email,
+		"role":            user.Role,
+		"saved_address":   user.SavedAddress,
+		"saved_lat":       user.SavedLat,
+		"saved_lng":       user.SavedLng,
+		"professional_id": user.ProfessionalID,
 	})
 	token, _ := auth.GenerateToken(user.ID, user.Email, user.Role, user.ProfessionalID)
 	writeJSON(w, http.StatusCreated, models.AuthResponse{
@@ -204,11 +208,16 @@ func (h *APIHandler) handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Datos de Google inválidos")
 		return
 	}
+	if strings.TrimSpace(input.IDToken) == "" {
+		h.metrics.RecordAuthEvent("google", input.Role, false)
+		writeError(w, http.StatusUnauthorized, "Se requiere un id_token de Google firmado para autenticar")
+		return
+	}
 	user, err := h.store.AuthenticateGoogle(r.Context(), input)
 	if err != nil {
 		h.metrics.RecordAuthEvent("google", input.Role, false)
 		telemetry.LogError(r.Context(), "auth.google", err, map[string]any{"email": input.Email})
-		writeError(w, http.StatusBadRequest, "Error en autenticación con Google: "+err.Error())
+		writeError(w, http.StatusUnauthorized, "Error en autenticación con Google: "+err.Error())
 		return
 	}
 	h.metrics.RecordAuthEvent("google", user.Role, true)

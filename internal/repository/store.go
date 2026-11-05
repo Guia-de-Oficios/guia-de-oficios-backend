@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,6 +88,100 @@ func (s *PostgresStore) Ping(ctx context.Context) (string, error) {
 	return "PostgreSQL + PostGIS " + postgisVer, nil
 }
 
+type neighborhoodCoord struct {
+	Canonical string
+	Keywords  []string
+	Lat       float64
+	Lng       float64
+}
+
+var cabaGbaNeighborhoods = []neighborhoodCoord{
+	{Canonical: "Caballito, CABA", Keywords: []string{"caballito"}, Lat: -34.6186, Lng: -58.4368},
+	{Canonical: "Flores, CABA", Keywords: []string{"flores"}, Lat: -34.6283, Lng: -58.4632},
+	{Canonical: "Almagro, CABA", Keywords: []string{"almagro"}, Lat: -34.6095, Lng: -58.4206},
+	{Canonical: "Palermo, CABA", Keywords: []string{"palermo"}, Lat: -34.5889, Lng: -58.4305},
+	{Canonical: "Belgrano, CABA", Keywords: []string{"belgrano"}, Lat: -34.5627, Lng: -58.4583},
+	{Canonical: "Recoleta, CABA", Keywords: []string{"recoleta"}, Lat: -34.5895, Lng: -58.3974},
+	{Canonical: "Villa Urquiza, CABA", Keywords: []string{"villa urquiza", "urquiza"}, Lat: -34.5736, Lng: -58.4864},
+	{Canonical: "Villa Crespo, CABA", Keywords: []string{"villa crespo", "crespo"}, Lat: -34.5986, Lng: -58.4426},
+	{Canonical: "Villa Devoto, CABA", Keywords: []string{"villa devoto", "devoto"}, Lat: -34.6019, Lng: -58.5122},
+	{Canonical: "Parque Chacabuco, CABA", Keywords: []string{"parque chacabuco", "chacabuco"}, Lat: -34.6347, Lng: -58.4428},
+	{Canonical: "Boedo, CABA", Keywords: []string{"boedo"}, Lat: -34.6258, Lng: -58.4168},
+	{Canonical: "San Telmo, CABA", Keywords: []string{"san telmo"}, Lat: -34.6212, Lng: -58.3731},
+	{Canonical: "Barracas, CABA", Keywords: []string{"barracas"}, Lat: -34.6416, Lng: -58.3768},
+	{Canonical: "Núñez, CABA", Keywords: []string{"nuñez", "nunez", "núñez"}, Lat: -34.5453, Lng: -58.4619},
+	{Canonical: "Colegiales, CABA", Keywords: []string{"colegiales"}, Lat: -34.5750, Lng: -58.4485},
+	{Canonical: "Chacarita, CABA", Keywords: []string{"chacarita"}, Lat: -34.5881, Lng: -58.4542},
+	{Canonical: "Liniers, CABA", Keywords: []string{"liniers"}, Lat: -34.6428, Lng: -58.5215},
+	{Canonical: "Mataderos, CABA", Keywords: []string{"mataderos"}, Lat: -34.6578, Lng: -58.5032},
+	{Canonical: "Vicente López, GBA Norte", Keywords: []string{"vicente lopez", "vicente lópez", "olivos"}, Lat: -34.5265, Lng: -58.4795},
+	{Canonical: "San Isidro, GBA Norte", Keywords: []string{"san isidro"}, Lat: -34.4721, Lng: -58.5272},
+	{Canonical: "Avellaneda, GBA Sur", Keywords: []string{"avellaneda"}, Lat: -34.6625, Lng: -58.3653},
+	{Canonical: "Lanús, GBA Sur", Keywords: []string{"lanus", "lanús"}, Lat: -34.7069, Lng: -58.3908},
+	{Canonical: "Lomas de Zamora, GBA Sur", Keywords: []string{"lomas de zamora", "banfield"}, Lat: -34.7609, Lng: -58.4063},
+	{Canonical: "Morón, GBA Oeste", Keywords: []string{"moron", "morón"}, Lat: -34.6534, Lng: -58.6198},
+	{Canonical: "Ramos Mejía, GBA Oeste", Keywords: []string{"ramos mejia", "ramos mejía"}, Lat: -34.6453, Lng: -58.5647},
+	{Canonical: "Caseros, GBA Oeste", Keywords: []string{"caseros", "tres de febrero"}, Lat: -34.6094, Lng: -58.5633},
+}
+
+// ResolveNeighborhoodCoordinates determina el barrio, dirección completa y coordenadas reales (lat/lng) de CABA y GBA (BE-2.1).
+func ResolveNeighborhoodCoordinates(neighborhood, rawAddress string, inputLat, inputLng float64) (cleanNeighborhood string, fullAddress string, lat float64, lng float64) {
+	nbTrim := strings.TrimSpace(neighborhood)
+	addrTrim := strings.TrimSpace(rawAddress)
+
+	var matched *neighborhoodCoord
+	searchTarget := strings.ToLower(nbTrim + " " + addrTrim)
+	for i := range cabaGbaNeighborhoods {
+		candidate := &cabaGbaNeighborhoods[i]
+		for _, kw := range candidate.Keywords {
+			if strings.Contains(searchTarget, kw) {
+				matched = candidate
+				break
+			}
+		}
+		if matched != nil {
+			break
+		}
+	}
+
+	if nbTrim != "" {
+		cleanNeighborhood = nbTrim
+	} else if matched != nil {
+		cleanNeighborhood = matched.Canonical
+	} else {
+		cleanNeighborhood = "Caballito, CABA"
+	}
+
+	switch {
+	case addrTrim != "" && nbTrim != "":
+		if strings.Contains(strings.ToLower(addrTrim), strings.ToLower(strings.Split(nbTrim, ",")[0])) {
+			fullAddress = addrTrim
+		} else {
+			fullAddress = fmt.Sprintf("%s, %s", addrTrim, nbTrim)
+		}
+	case addrTrim != "":
+		fullAddress = addrTrim
+	case nbTrim != "":
+		fullAddress = nbTrim
+	default:
+		fullAddress = "Av. Rivadavia 5420, Caballito"
+	}
+
+	isDefaultCaballitoCoords := math.Abs(inputLat-(-34.6186)) < 0.0001 && math.Abs(inputLng-(-58.4368)) < 0.0001
+	if matched != nil && (inputLat == 0 || inputLng == 0 || isDefaultCaballitoCoords) {
+		lat = matched.Lat
+		lng = matched.Lng
+	} else if inputLat != 0 && inputLng != 0 {
+		lat = inputLat
+		lng = inputLng
+	} else {
+		lat = -34.6186
+		lng = -58.4368
+	}
+
+	return cleanNeighborhood, fullAddress, lat, lng
+}
+
 func (s *PostgresStore) RegisterUser(ctx context.Context, input models.RegisterUserInput) (*models.User, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -102,27 +195,36 @@ func (s *PostgresStore) RegisterUser(ctx context.Context, input models.RegisterU
 	if input.AuthProvider == "" {
 		input.AuthProvider = "manual"
 	}
-	if input.SavedAddress == "" {
-		input.SavedAddress = "Av. Rivadavia 5420, Caballito"
-	}
-	if input.SavedLat == 0 {
-		input.SavedLat = -34.6186
-	}
-	if input.SavedLng == 0 {
-		input.SavedLng = -58.4368
-	}
 
-	hashedPwd, err := auth.HashPassword(input.Password)
+	rawStreet := strings.TrimSpace(input.Address)
+	if rawStreet == "" {
+		rawStreet = strings.TrimSpace(input.SavedAddress)
+	}
+	cleanNeighborhood, resolvedAddr, resolvedLat, resolvedLng := ResolveNeighborhoodCoordinates(
+		input.Neighborhood,
+		rawStreet,
+		input.SavedLat,
+		input.SavedLng,
+	)
+	input.SavedAddress = resolvedAddr
+	input.SavedLat = resolvedLat
+	input.SavedLng = resolvedLng
+
+	pwdToHash := input.Password
+	if len(pwdToHash) > 72 {
+		pwdToHash = pwdToHash[:72]
+	}
+	hashedPwd, err := auth.HashPassword(pwdToHash)
 	if err != nil {
 		return nil, err
 	}
 
 	var u models.User
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO users (full_name, email, phone, password_hash, auth_provider, saved_address, saved_lat, saved_lng, role)
-		VALUES ($1, LOWER(TRIM($2)), $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO users (full_name, email, phone, password_hash, google_sub, auth_provider, saved_address, saved_lat, saved_lng, role)
+		VALUES ($1, LOWER(TRIM($2)), $3, $4, NULLIF($5, ''), $6, $7, $8, $9, $10)
 		RETURNING id, full_name, email, phone, role, auth_provider, saved_address, saved_lat, saved_lng, created_at
-	`, input.FullName, input.Email, input.Phone, hashedPwd, input.AuthProvider, input.SavedAddress, input.SavedLat, input.SavedLng, input.Role).Scan(
+	`, input.FullName, input.Email, input.Phone, hashedPwd, strings.TrimSpace(input.GoogleSub), input.AuthProvider, input.SavedAddress, input.SavedLat, input.SavedLng, input.Role).Scan(
 		&u.ID, &u.FullName, &u.Email, &u.Phone, &u.Role, &u.AuthProvider, &u.SavedAddress, &u.SavedLat, &u.SavedLng, &u.CreatedAt,
 	)
 	if err != nil {
@@ -132,7 +234,7 @@ func (s *PostgresStore) RegisterUser(ctx context.Context, input models.RegisterU
 		return nil, err
 	}
 
-	// Si se registra como profesional, creamos automáticamente su fila inicial en professional_profiles
+	// Si se registra como profesional, creamos automáticamente su fila inicial en professional_profiles con su barrio y ubicación PostGIS real (BE-2.1)
 	if u.Role == "professional" {
 		var profID string
 		err = tx.QueryRowContext(ctx, `
@@ -142,12 +244,12 @@ func (s *PostgresStore) RegisterUser(ctx context.Context, input models.RegisterU
 			)
 			VALUES (
 				$1, 1, 'Profesional de Oficio', 'Vecino profesional registrado en Guía de Oficios.',
-				'Caballito, CABA', 5,
-				ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
+				$2, 5,
+				ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography,
 				TRUE, 'pending_review'
 			)
 			RETURNING id
-		`, u.ID, u.SavedLng, u.SavedLat).Scan(&profID)
+		`, u.ID, cleanNeighborhood, u.SavedLng, u.SavedLat).Scan(&profID)
 		if err != nil {
 			return nil, err
 		}
@@ -197,31 +299,19 @@ func (s *PostgresStore) AuthenticateUser(ctx context.Context, identifier, passwo
 }
 
 func (s *PostgresStore) AuthenticateGoogle(ctx context.Context, input models.GoogleAuthInput) (*models.User, error) {
-	// Si viene un id_token JWT de Google, extraemos email y nombre del payload si no vinieron explícitos
-	if strings.TrimSpace(input.IDToken) != "" && (strings.TrimSpace(input.Email) == "" || strings.TrimSpace(input.FullName) == "") {
-		parts := strings.Split(strings.TrimSpace(input.IDToken), ".")
-		if len(parts) == 3 {
-			if payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
-				var claims struct {
-					Email string `json:"email"`
-					Name  string `json:"name"`
-				}
-				if json.Unmarshal(payloadBytes, &claims) == nil {
-					if strings.TrimSpace(input.Email) == "" && claims.Email != "" {
-						input.Email = claims.Email
-					}
-					if strings.TrimSpace(input.FullName) == "" && claims.Name != "" {
-						input.FullName = claims.Name
-					}
-				}
-			}
-		}
+	// BE-2.2: Validar criptográficamente el id_token (prohibido iniciar sesión enviando solo un email en texto plano sin firma)
+	claims, err := auth.VerifyGoogleIDToken(input.IDToken)
+	if err != nil {
+		return nil, err
 	}
 
-	input.Email = strings.TrimSpace(input.Email)
-	input.FullName = strings.TrimSpace(input.FullName)
-	if input.Email == "" || !strings.Contains(input.Email, "@") {
-		return nil, errors.New("se requiere un correo de Google válido")
+	if strings.TrimSpace(input.Email) != "" && !strings.EqualFold(strings.TrimSpace(input.Email), claims.Email) {
+		return nil, errors.New("el correo enviado no coincide con el token firmado de Google")
+	}
+
+	input.Email = claims.Email
+	if strings.TrimSpace(input.FullName) == "" {
+		input.FullName = strings.TrimSpace(claims.Name)
 	}
 	if input.FullName == "" {
 		localPart := strings.Split(input.Email, "@")[0]
@@ -234,26 +324,33 @@ func (s *PostgresStore) AuthenticateGoogle(ctx context.Context, input models.Goo
 	// Buscar si ya existe por email
 	var u models.User
 	var profID sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	var existingGoogleSub sql.NullString
+	err = s.db.QueryRowContext(ctx, `
 		SELECT u.id, u.full_name, u.email, u.phone, u.role, u.auth_provider,
 		       u.saved_address, u.saved_lat, u.saved_lng, u.created_at,
-		       p.id AS professional_id
+		       p.id AS professional_id, u.google_sub
 		FROM users u
 		LEFT JOIN professional_profiles p ON p.user_id = u.id
 		WHERE LOWER(u.email) = LOWER(TRIM($1))
 	`, input.Email).Scan(
 		&u.ID, &u.FullName, &u.Email, &u.Phone, &u.Role, &u.AuthProvider,
-		&u.SavedAddress, &u.SavedLat, &u.SavedLng, &u.CreatedAt, &profID,
+		&u.SavedAddress, &u.SavedLat, &u.SavedLng, &u.CreatedAt, &profID, &existingGoogleSub,
 	)
 	if err == nil {
+		if existingGoogleSub.Valid && existingGoogleSub.String != "" && claims.Sub != "" && existingGoogleSub.String != claims.Sub {
+			return nil, errors.New("el identificador de cuenta de Google no coincide con el registrado")
+		}
+		if (!existingGoogleSub.Valid || existingGoogleSub.String == "") && claims.Sub != "" {
+			_, _ = s.db.ExecContext(ctx, `UPDATE users SET google_sub = $1 WHERE id = $2`, claims.Sub, u.ID)
+		}
 		u.ProfessionalID = profID.String
 		return &u, nil
 	}
 
-	// Si no existe, lo registramos en PostgreSQL con auth_provider = "google"
-	pwdSeed := input.IDToken
-	if pwdSeed == "" {
-		pwdSeed = "google-oauth-" + input.Email
+	// Si no existe, lo registramos en PostgreSQL con auth_provider = "google" y su google_sub verificado
+	pwdSeed := "g-oauth-" + claims.Sub
+	if len(pwdSeed) > 60 {
+		pwdSeed = pwdSeed[:60]
 	}
 	return s.RegisterUser(ctx, models.RegisterUserInput{
 		FullName:     input.FullName,
@@ -262,6 +359,9 @@ func (s *PostgresStore) AuthenticateGoogle(ctx context.Context, input models.Goo
 		Password:     pwdSeed,
 		Role:         input.Role,
 		AuthProvider: "google",
+		GoogleSub:    claims.Sub,
+		Neighborhood: input.Neighborhood,
+		Address:      input.Address,
 	})
 }
 
@@ -288,18 +388,18 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, userID string) (*models
 }
 
 func (s *PostgresStore) UpdateUserAddress(ctx context.Context, userID string, input models.UpdateAddressInput) (*models.User, error) {
-	if input.SavedLat == 0 {
-		input.SavedLat = -34.6186
-	}
-	if input.SavedLng == 0 {
-		input.SavedLng = -58.4368
-	}
+	_, resolvedAddr, resolvedLat, resolvedLng := ResolveNeighborhoodCoordinates(
+		"",
+		input.SavedAddress,
+		input.SavedLat,
+		input.SavedLng,
+	)
 
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE users
 		SET saved_address = $1, saved_lat = $2, saved_lng = $3
 		WHERE id::text = $4
-	`, input.SavedAddress, input.SavedLat, input.SavedLng, userID)
+	`, resolvedAddr, resolvedLat, resolvedLng, userID)
 	if err != nil {
 		return nil, err
 	}

@@ -14,15 +14,18 @@ type Category struct {
 	DisplayOrder   int    `json:"display_order"`
 }
 
-// RegisterUserInput representa el formulario de "registro_google_o_manual" (GDO-11).
+// RegisterUserInput representa el formulario de "registro_google_o_manual" (GDO-11, BE-2.1).
 type RegisterUserInput struct {
 	FullName     string  `json:"full_name"`
 	Phone        string  `json:"phone"`
 	Email        string  `json:"email"`
 	Password     string  `json:"password"`
-	Role         string  `json:"role"`          // "client" | "professional"
-	AuthProvider string  `json:"auth_provider"` // "manual" | "google"
-	SavedAddress string  `json:"saved_address,omitempty"`
+	Role         string  `json:"role"`                    // "client" | "professional"
+	AuthProvider string  `json:"auth_provider"`           // "manual" | "google"
+	GoogleSub    string  `json:"google_sub,omitempty"`
+	Neighborhood string  `json:"neighborhood,omitempty"`  // Barrio de CABA o GBA (ej: "Palermo, CABA")
+	Address      string  `json:"address,omitempty"`       // Calle y altura (ej: "Av. Santa Fe 3420")
+	SavedAddress string  `json:"saved_address,omitempty"` // Dirección completa combinada
 	SavedLat     float64 `json:"saved_lat,omitempty"`
 	SavedLng     float64 `json:"saved_lng,omitempty"`
 }
@@ -33,13 +36,15 @@ type LoginInput struct {
 	Password string `json:"password"`
 }
 
-// GoogleAuthInput representa la petición a POST /api/v1/auth/google (GDO-12).
+// GoogleAuthInput representa la petición a POST /api/v1/auth/google (GDO-12, BE-2.2).
 type GoogleAuthInput struct {
-	IDToken  string `json:"id_token"`
-	Email    string `json:"email"`
-	FullName string `json:"full_name"`
-	Phone    string `json:"phone,omitempty"`
-	Role     string `json:"role"` // "client" | "professional"
+	IDToken      string `json:"id_token"`
+	Email        string `json:"email,omitempty"`
+	FullName     string `json:"full_name,omitempty"`
+	Phone        string `json:"phone,omitempty"`
+	Role         string `json:"role"` // "client" | "professional"
+	Neighborhood string `json:"neighborhood,omitempty"`
+	Address      string `json:"address,omitempty"`
 }
 
 // UpdateAddressInput representa PATCH /api/v1/users/me/address (GDO-13).

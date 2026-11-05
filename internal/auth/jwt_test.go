@@ -48,4 +48,26 @@ func TestJWTAndPasswordHashing(t *testing.T) {
 	if claims.UserID != "user-123" || claims.Email != "vecino@correo.com" || claims.Role != "client" {
 		t.Fatalf("claims inesperados: %+v", claims)
 	}
+
+	// BE-2.2: Verificar generación y validación criptográfica de id_token de Google
+	if _, err := VerifyGoogleIDToken(""); err == nil {
+		t.Fatalf("debía rechazar id_token vacío")
+	}
+	if _, err := VerifyGoogleIDToken("google-android-account-123456"); err == nil {
+		t.Fatalf("debía rechazar un string plano sin firma JWT")
+	}
+	if _, err := VerifyGoogleIDToken("eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImZhbHNvQGdtYWlsLmNvbSJ9.firma_falsa"); err == nil {
+		t.Fatalf("debía rechazar un JWT con firma criptográfica inválida")
+	}
+	validGToken, err := GenerateGoogleIDToken("vecina.palermo@gmail.com", "Lucía Fernández", "google-sub-123")
+	if err != nil {
+		t.Fatalf("error generando id_token válido: %v", err)
+	}
+	gClaims, err := VerifyGoogleIDToken(validGToken)
+	if err != nil {
+		t.Fatalf("esperaba verificación exitosa de id_token firmado: %v", err)
+	}
+	if gClaims.Email != "vecina.palermo@gmail.com" || gClaims.Sub != "google-sub-123" {
+		t.Fatalf("claims de Google inesperados: %+v", gClaims)
+	}
 }
