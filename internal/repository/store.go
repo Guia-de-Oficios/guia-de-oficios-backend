@@ -3,11 +3,14 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
+	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -89,6 +92,438 @@ func (s *PostgresStore) Ping(ctx context.Context) (string, error) {
 	return "PostgreSQL + PostGIS " + postgisVer, nil
 }
 
+type neighborhoodCoord struct {
+	Canonical string
+	Province  string
+	Keywords  []string
+	Lat       float64
+	Lng       float64
+}
+
+// argentineLocalitiesCatalog incluye las zonas prioritarias de lanzamiento (Gran Mendoza y Luján, PBA),
+// junto con CABA, GBA y las principales ciudades de Argentina como catálogo local rápido y fallback sin conexión.
+var argentineLocalitiesCatalog = []neighborhoodCoord{
+	// Gran Mendoza (Zonas de lanzamiento prioritario: municipios específicos primero, Capital al final del bloque Mendoza)
+	{Canonical: "Godoy Cruz, Mendoza", Province: "Mendoza", Keywords: []string{"godoy cruz", "villa hipodromo", "palmares", "trapiche"}, Lat: -32.9253, Lng: -68.8444},
+	{Canonical: "Guaymallén, Mendoza", Province: "Mendoza", Keywords: []string{"guaymallen", "guaymallén", "villa nueva", "dorrego", "rodeo de la cruz", "san jose mendoza"}, Lat: -32.8997, Lng: -68.7975},
+	{Canonical: "Las Heras, Mendoza", Province: "Mendoza", Keywords: []string{"las heras", "el challao", "panquehua", "uspallata"}, Lat: -32.8527, Lng: -68.8284},
+	{Canonical: "Luján de Cuyo, Mendoza", Province: "Mendoza", Keywords: []string{"lujan de cuyo", "luján de cuyo", "chacras de coria", "vistalba", "carrodilla", "mayor drummond", "perdriel", "potrerillos"}, Lat: -33.0381, Lng: -68.8794},
+	{Canonical: "Maipú, Mendoza", Province: "Mendoza", Keywords: []string{"maipu", "maipú", "coquimbito", "luzuriaga", "gutierrez", "gutiérrez", "rodeo del medio"}, Lat: -32.9774, Lng: -68.7867},
+	{Canonical: "San Rafael, Mendoza", Province: "Mendoza", Keywords: []string{"san rafael"}, Lat: -34.6177, Lng: -68.3301},
+	{Canonical: "San Martín, Mendoza", Province: "Mendoza", Keywords: []string{"general san martin mendoza", "san martin mendoza"}, Lat: -33.0810, Lng: -68.4681},
+	{Canonical: "Tunuyán, Mendoza", Province: "Mendoza", Keywords: []string{"tunuyan", "tunuyán", "valle de uco"}, Lat: -33.5811, Lng: -69.0185},
+	{Canonical: "Ciudad de Mendoza, Mendoza", Province: "Mendoza", Keywords: []string{"ciudad de mendoza", "mendoza capital", "microcentro mendoza", "quinta seccion", "quinta sección", "sexta seccion", "sexta sección", "cuarta seccion", "mendoza"}, Lat: -32.8895, Lng: -68.8458},
+
+	// Luján y Corredor Oeste PBA (Zonas de lanzamiento prioritario)
+	{Canonical: "Luján, Buenos Aires", Province: "Buenos Aires", Keywords: []string{"lujan", "luján", "open door", "jauregui", "jáuregui", "carlos keen", "pueblo nuevo lujan", "cortinez", "cortínez", "torres lujan", "olivera"}, Lat: -34.5703, Lng: -59.1050},
+	{Canonical: "General Rodríguez, Buenos Aires", Province: "Buenos Aires", Keywords: []string{"general rodriguez", "general rodríguez", "gral rodriguez"}, Lat: -34.6083, Lng: -58.9489},
+	{Canonical: "Mercedes, Buenos Aires", Province: "Buenos Aires", Keywords: []string{"mercedes"}, Lat: -34.6515, Lng: -59.4307},
+	{Canonical: "Pilar, Buenos Aires", Province: "Buenos Aires", Keywords: []string{"pilar", "del viso", "manzanares", "fatima", "fátima"}, Lat: -34.4587, Lng: -58.9142},
+	{Canonical: "Moreno, GBA Oeste", Province: "Buenos Aires", Keywords: []string{"moreno", "paso del rey", "francisco alvarez", "la reja"}, Lat: -34.6496, Lng: -58.7906},
+
+	// CABA y GBA
+	{Canonical: "Caballito, CABA", Province: "CABA", Keywords: []string{"caballito"}, Lat: -34.6186, Lng: -58.4368},
+	{Canonical: "Flores, CABA", Province: "CABA", Keywords: []string{"flores"}, Lat: -34.6283, Lng: -58.4632},
+	{Canonical: "Almagro, CABA", Province: "CABA", Keywords: []string{"almagro"}, Lat: -34.6095, Lng: -58.4206},
+	{Canonical: "Palermo, CABA", Province: "CABA", Keywords: []string{"palermo"}, Lat: -34.5889, Lng: -58.4305},
+	{Canonical: "Belgrano, CABA", Province: "CABA", Keywords: []string{"belgrano"}, Lat: -34.5627, Lng: -58.4583},
+	{Canonical: "Recoleta, CABA", Province: "CABA", Keywords: []string{"recoleta"}, Lat: -34.5895, Lng: -58.3974},
+	{Canonical: "Villa Urquiza, CABA", Province: "CABA", Keywords: []string{"villa urquiza", "urquiza"}, Lat: -34.5736, Lng: -58.4864},
+	{Canonical: "Villa Crespo, CABA", Province: "CABA", Keywords: []string{"villa crespo", "crespo"}, Lat: -34.5986, Lng: -58.4426},
+	{Canonical: "Villa Devoto, CABA", Province: "CABA", Keywords: []string{"villa devoto", "devoto"}, Lat: -34.6019, Lng: -58.5122},
+	{Canonical: "Parque Chacabuco, CABA", Province: "CABA", Keywords: []string{"parque chacabuco", "chacabuco"}, Lat: -34.6347, Lng: -58.4428},
+	{Canonical: "Boedo, CABA", Province: "CABA", Keywords: []string{"boedo"}, Lat: -34.6258, Lng: -58.4168},
+	{Canonical: "San Telmo, CABA", Province: "CABA", Keywords: []string{"san telmo"}, Lat: -34.6212, Lng: -58.3731},
+	{Canonical: "Barracas, CABA", Province: "CABA", Keywords: []string{"barracas"}, Lat: -34.6416, Lng: -58.3768},
+	{Canonical: "Núñez, CABA", Province: "CABA", Keywords: []string{"nuñez", "nunez", "núñez"}, Lat: -34.5453, Lng: -58.4619},
+	{Canonical: "Colegiales, CABA", Province: "CABA", Keywords: []string{"colegiales"}, Lat: -34.5750, Lng: -58.4485},
+	{Canonical: "Chacarita, CABA", Province: "CABA", Keywords: []string{"chacarita"}, Lat: -34.5881, Lng: -58.4542},
+	{Canonical: "Liniers, CABA", Province: "CABA", Keywords: []string{"liniers"}, Lat: -34.6428, Lng: -58.5215},
+	{Canonical: "Mataderos, CABA", Province: "CABA", Keywords: []string{"mataderos"}, Lat: -34.6578, Lng: -58.5032},
+	{Canonical: "Vicente López, GBA Norte", Province: "Buenos Aires", Keywords: []string{"vicente lopez", "vicente lópez", "olivos"}, Lat: -34.5265, Lng: -58.4795},
+	{Canonical: "San Isidro, GBA Norte", Province: "Buenos Aires", Keywords: []string{"san isidro"}, Lat: -34.4721, Lng: -58.5272},
+	{Canonical: "Avellaneda, GBA Sur", Province: "Buenos Aires", Keywords: []string{"avellaneda"}, Lat: -34.6625, Lng: -58.3653},
+	{Canonical: "Lanús, GBA Sur", Province: "Buenos Aires", Keywords: []string{"lanus", "lanús"}, Lat: -34.7069, Lng: -58.3908},
+	{Canonical: "Lomas de Zamora, GBA Sur", Province: "Buenos Aires", Keywords: []string{"lomas de zamora", "banfield"}, Lat: -34.7609, Lng: -58.4063},
+	{Canonical: "Morón, GBA Oeste", Province: "Buenos Aires", Keywords: []string{"moron", "morón"}, Lat: -34.6534, Lng: -58.6198},
+	{Canonical: "Ramos Mejía, GBA Oeste", Province: "Buenos Aires", Keywords: []string{"ramos mejia", "ramos mejía"}, Lat: -34.6453, Lng: -58.5647},
+	{Canonical: "Caseros, GBA Oeste", Province: "Buenos Aires", Keywords: []string{"caseros", "tres de febrero"}, Lat: -34.6094, Lng: -58.5633},
+
+	// Otras ciudades principales de Argentina
+	{Canonical: "La Plata, Buenos Aires", Province: "Buenos Aires", Keywords: []string{"la plata", "city bell", "gonnet"}, Lat: -34.9205, Lng: -57.9536},
+	{Canonical: "Mar del Plata, Buenos Aires", Province: "Buenos Aires", Keywords: []string{"mar del plata"}, Lat: -38.0055, Lng: -57.5426},
+	{Canonical: "Córdoba Capital, Córdoba", Province: "Córdoba", Keywords: []string{"cordoba", "córdoba", "nueva cordoba"}, Lat: -31.4201, Lng: -64.1888},
+	{Canonical: "Rosario, Santa Fe", Province: "Santa Fe", Keywords: []string{"rosario"}, Lat: -32.9442, Lng: -60.6505},
+	{Canonical: "San Juan Capital, San Juan", Province: "San Juan", Keywords: []string{"san juan"}, Lat: -31.5375, Lng: -68.5364},
+	{Canonical: "San Luis Capital, San Luis", Province: "San Luis", Keywords: []string{"san luis"}, Lat: -33.3017, Lng: -66.3378},
+}
+
+func matchLocalCatalog(query string) *neighborhoodCoord {
+	lower := strings.ToLower(strings.TrimSpace(query))
+	if lower == "" {
+		return nil
+	}
+	// Priorizar coincidencias específicas (por ej. "lujan de cuyo" antes de "lujan")
+	if strings.Contains(lower, "lujan de cuyo") || strings.Contains(lower, "luján de cuyo") || strings.Contains(lower, "chacras de coria") {
+		for i := range argentineLocalitiesCatalog {
+			if argentineLocalitiesCatalog[i].Canonical == "Luján de Cuyo, Mendoza" {
+				return &argentineLocalitiesCatalog[i]
+			}
+		}
+	}
+	for i := range argentineLocalitiesCatalog {
+		candidate := &argentineLocalitiesCatalog[i]
+		for _, kw := range candidate.Keywords {
+			if strings.Contains(lower, kw) {
+				return candidate
+			}
+		}
+	}
+	return nil
+}
+
+// queryGoogleMapsGeocode consulta la API oficial de Google Maps Geocoding si GOOGLE_MAPS_API_KEY está configurada.
+func queryGoogleMapsGeocode(ctx context.Context, searchQuery string) (*models.GeocodeResult, error) {
+	apiKey := strings.TrimSpace(os.Getenv("GOOGLE_MAPS_API_KEY"))
+	if apiKey == "" {
+		return nil, errors.New("GOOGLE_MAPS_API_KEY no configurada")
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 3500*time.Millisecond)
+	defer cancel()
+
+	endpoint := fmt.Sprintf(
+		"https://maps.googleapis.com/maps/api/geocode/json?address=%s&region=ar&language=es&components=country:AR&key=%s",
+		url.QueryEscape(searchQuery+", Argentina"),
+		url.QueryEscape(apiKey),
+	)
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var payload struct {
+		Status  string `json:"status"`
+		Results []struct {
+			FormattedAddress  string `json:"formatted_address"`
+			AddressComponents []struct {
+				LongName  string   `json:"long_name"`
+				ShortName string   `json:"short_name"`
+				Types     []string `json:"types"`
+			} `json:"address_components"`
+			Geometry struct {
+				Location struct {
+					Lat float64 `json:"lat"`
+					Lng float64 `json:"lng"`
+				} `json:"location"`
+			} `json:"geometry"`
+		} `json:"results"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	if payload.Status != "OK" || len(payload.Results) == 0 {
+		return nil, fmt.Errorf("google maps geocode status: %s", payload.Status)
+	}
+
+	top := payload.Results[0]
+	var sublocality, locality, adminArea2, province string
+	for _, comp := range top.AddressComponents {
+		for _, t := range comp.Types {
+			switch t {
+			case "sublocality", "sublocality_level_1", "neighborhood":
+				if sublocality == "" {
+					sublocality = comp.LongName
+				}
+			case "locality":
+				if locality == "" {
+					locality = comp.LongName
+				}
+			case "administrative_area_level_2":
+				if adminArea2 == "" {
+					adminArea2 = comp.LongName
+				}
+			case "administrative_area_level_1":
+				if province == "" {
+					province = comp.LongName
+				}
+			}
+		}
+	}
+
+	primaryZone := sublocality
+	if primaryZone == "" {
+		primaryZone = locality
+	}
+	if primaryZone == "" {
+		primaryZone = adminArea2
+	}
+	cleanProvince := strings.TrimSpace(strings.ReplaceAll(province, "Provincia de ", ""))
+	if strings.Contains(strings.ToLower(cleanProvince), "autónoma de buenos aires") {
+		cleanProvince = "CABA"
+	}
+
+	neighborhoodLabel := primaryZone
+	if cleanProvince != "" && primaryZone != "" && !strings.EqualFold(primaryZone, cleanProvince) {
+		neighborhoodLabel = fmt.Sprintf("%s, %s", primaryZone, cleanProvince)
+	} else if neighborhoodLabel == "" {
+		neighborhoodLabel = top.FormattedAddress
+	}
+
+	return &models.GeocodeResult{
+		FormattedAddress: strings.TrimSuffix(top.FormattedAddress, ", Argentina"),
+		Neighborhood:     neighborhoodLabel,
+		Locality:         locality,
+		Province:         cleanProvince,
+		Lat:              top.Geometry.Location.Lat,
+		Lng:              top.Geometry.Location.Lng,
+		Source:           "google_maps",
+		Verified:         true,
+	}, nil
+}
+
+// queryNominatimGeocode consulta OpenStreetMap Nominatim restringido a Argentina (countrycodes=ar) sin requerir API Key paga.
+func queryNominatimGeocode(ctx context.Context, searchQuery string) (*models.GeocodeResult, error) {
+	if os.Getenv("DISABLE_EXTERNAL_GEOCODE") == "true" {
+		return nil, errors.New("external geocode disabled")
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 3500*time.Millisecond)
+	defer cancel()
+
+	endpoint := fmt.Sprintf(
+		"https://nominatim.openstreetmap.org/search?format=json&countrycodes=ar&limit=1&addressdetails=1&accept-language=es&q=%s",
+		url.QueryEscape(searchQuery+", Argentina"),
+	)
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "GuiaDeOficiosArgentina/1.0 (soporte@guiadeoficios.ar)")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("nominatim status %d", resp.StatusCode)
+	}
+
+	var results []struct {
+		DisplayName string            `json:"display_name"`
+		Lat         string            `json:"lat"`
+		Lon         string            `json:"lon"`
+		Address     map[string]string `json:"address"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, errors.New("sin resultados en nominatim")
+	}
+
+	top := results[0]
+	lat, err1 := strconv.ParseFloat(top.Lat, 64)
+	lng, err2 := strconv.ParseFloat(top.Lon, 64)
+	if err1 != nil || err2 != nil {
+		return nil, errors.New("coordenadas inválidas en nominatim")
+	}
+
+	addr := top.Address
+	locality := firstNonEmpty(addr["city"], addr["town"], addr["village"], addr["municipality"], addr["county"], addr["state_district"])
+	suburb := firstNonEmpty(addr["suburb"], addr["neighbourhood"], addr["quarter"], addr["city_district"])
+	state := strings.TrimSpace(strings.ReplaceAll(addr["state"], "Provincia de ", ""))
+	if strings.Contains(strings.ToLower(state), "autónoma de buenos aires") {
+		state = "CABA"
+	}
+
+	zoneName := locality
+	if state == "CABA" && suburb != "" {
+		zoneName = suburb
+	} else if zoneName == "" {
+		zoneName = suburb
+	}
+
+	neighborhoodLabel := zoneName
+	if state != "" && zoneName != "" && !strings.EqualFold(zoneName, state) {
+		neighborhoodLabel = fmt.Sprintf("%s, %s", zoneName, state)
+	} else if neighborhoodLabel == "" {
+		neighborhoodLabel = state
+	}
+
+	road := firstNonEmpty(addr["road"], addr["pedestrian"])
+	houseNumber := addr["house_number"]
+	var formattedAddr string
+	if road != "" {
+		streetPart := road
+		if houseNumber != "" {
+			streetPart = fmt.Sprintf("%s %s", road, houseNumber)
+		}
+		if neighborhoodLabel != "" {
+			formattedAddr = fmt.Sprintf("%s, %s", streetPart, neighborhoodLabel)
+		} else {
+			formattedAddr = streetPart
+		}
+	} else {
+		parts := strings.Split(top.DisplayName, ",")
+		if len(parts) > 3 {
+			formattedAddr = strings.TrimSpace(strings.Join(parts[:3], ","))
+		} else {
+			formattedAddr = strings.TrimSuffix(top.DisplayName, ", Argentina")
+		}
+	}
+
+	return &models.GeocodeResult{
+		FormattedAddress: formattedAddr,
+		Neighborhood:     neighborhoodLabel,
+		Locality:         locality,
+		Province:         state,
+		Lat:              lat,
+		Lng:              lng,
+		Source:           "nominatim_osm",
+		Verified:         true,
+	}, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if trimmed := strings.TrimSpace(v); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// GeocodeArgentineAddress valida y geocodifica dinámicamente cualquier dirección o localidad de Argentina
+// (Gran Mendoza, Luján PBA, CABA, GBA o cualquier provincia) usando Google Maps API, OpenStreetMap Nominatim y el catálogo nacional.
+func GeocodeArgentineAddress(ctx context.Context, neighborhood, rawAddress string, inputLat, inputLng float64) models.GeocodeResult {
+	nbTrim := strings.TrimSpace(neighborhood)
+	addrTrim := strings.TrimSpace(rawAddress)
+
+	var combinedQuery string
+	switch {
+	case addrTrim != "" && nbTrim != "":
+		if strings.Contains(strings.ToLower(addrTrim), strings.ToLower(strings.Split(nbTrim, ",")[0])) {
+			combinedQuery = addrTrim
+		} else {
+			combinedQuery = fmt.Sprintf("%s, %s", addrTrim, nbTrim)
+		}
+	case addrTrim != "":
+		combinedQuery = addrTrim
+	case nbTrim != "":
+		combinedQuery = nbTrim
+	}
+
+	isDefaultFallbackCoords := (inputLat == 0 && inputLng == 0) ||
+		(math.Abs(inputLat-(-34.6186)) < 0.0001 && math.Abs(inputLng-(-58.4368)) < 0.0001)
+
+	// 1. Si el cliente ya envió coordenadas validadas explícitas (distintas del fallback por defecto), las respetamos
+	if !isDefaultFallbackCoords && combinedQuery != "" {
+		cleanNb := nbTrim
+		if cleanNb == "" {
+			if matched := matchLocalCatalog(combinedQuery); matched != nil {
+				cleanNb = matched.Canonical
+			} else {
+				cleanNb = combinedQuery
+			}
+		}
+		return models.GeocodeResult{
+			FormattedAddress: combinedQuery,
+			Neighborhood:     cleanNb,
+			Locality:         cleanNb,
+			Lat:              inputLat,
+			Lng:              inputLng,
+			Source:           "client_verified",
+			Verified:         true,
+		}
+	}
+
+	// 2. Intentar geocodificación dinámica en vivo si hay texto de búsqueda
+	if combinedQuery != "" {
+		// 2a. Google Maps Geocoding API (si hay GOOGLE_MAPS_API_KEY configurada)
+		if gResult, err := queryGoogleMapsGeocode(ctx, combinedQuery); err == nil && gResult != nil {
+			if nbTrim != "" && gResult.Neighborhood == "" {
+				gResult.Neighborhood = nbTrim
+			}
+			return *gResult
+		}
+
+		// 2b. OpenStreetMap Nominatim Geocoding API (gratuito, cubre toda Argentina: Gran Mendoza, Luján, CABA, etc.)
+		if osmResult, err := queryNominatimGeocode(ctx, combinedQuery); err == nil && osmResult != nil {
+			// Si el usuario ingresó calle + altura pero Nominatim devolvió solo la ciudad, preservar la calle en FormattedAddress
+			if addrTrim != "" && !strings.Contains(strings.ToLower(osmResult.FormattedAddress), strings.ToLower(strings.Split(addrTrim, " ")[0])) {
+				if osmResult.Neighborhood != "" {
+					osmResult.FormattedAddress = fmt.Sprintf("%s, %s", addrTrim, osmResult.Neighborhood)
+				} else {
+					osmResult.FormattedAddress = combinedQuery
+				}
+			}
+			return *osmResult
+		}
+	}
+
+	// 3. Catálogo Nacional (Gran Mendoza, Luján PBA, CABA, GBA, interior) para resolución instantánea u offline
+	matched := matchLocalCatalog(nbTrim + " " + addrTrim)
+	if matched != nil {
+		cleanNb := matched.Canonical
+		if nbTrim != "" && strings.Contains(nbTrim, ",") {
+			cleanNb = nbTrim
+		}
+		fullAddr := combinedQuery
+		if fullAddr == "" {
+			fullAddr = cleanNb
+		}
+		return models.GeocodeResult{
+			FormattedAddress: fullAddr,
+			Neighborhood:     cleanNb,
+			Locality:         matched.Canonical,
+			Province:         matched.Province,
+			Lat:              matched.Lat,
+			Lng:              matched.Lng,
+			Source:           "local_catalog",
+			Verified:         true,
+		}
+	}
+
+	// 4. Último fallback si no se pudo geocodificar ni coincidir
+	cleanNb := nbTrim
+	if cleanNb == "" {
+		cleanNb = "Luján, Buenos Aires"
+	}
+	fullAddr := combinedQuery
+	if fullAddr == "" {
+		fullAddr = cleanNb
+	}
+	return models.GeocodeResult{
+		FormattedAddress: fullAddr,
+		Neighborhood:     cleanNb,
+		Locality:         cleanNb,
+		Province:         "Argentina",
+		Lat:              -34.5703,
+		Lng:              -59.1050,
+		Source:           "fallback",
+		Verified:         false,
+	}
+}
+
+// ResolveNeighborhoodCoordinates mantiene compatibilidad con llamadas directas devolviendo (barrio, dirección, lat, lng)
+// pero utilizando el motor dinámico GeocodeArgentineAddress para cualquier punto del país.
+func ResolveNeighborhoodCoordinates(neighborhood, rawAddress string, inputLat, inputLng float64) (cleanNeighborhood string, fullAddress string, lat float64, lng float64) {
+	res := GeocodeArgentineAddress(context.Background(), neighborhood, rawAddress, inputLat, inputLng)
+	return res.Neighborhood, res.FormattedAddress, res.Lat, res.Lng
+}
+
 func (s *PostgresStore) RegisterUser(ctx context.Context, input models.RegisterUserInput) (*models.User, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -102,27 +537,38 @@ func (s *PostgresStore) RegisterUser(ctx context.Context, input models.RegisterU
 	if input.AuthProvider == "" {
 		input.AuthProvider = "manual"
 	}
-	if input.SavedAddress == "" {
-		input.SavedAddress = "Av. Rivadavia 5420, Caballito"
-	}
-	if input.SavedLat == 0 {
-		input.SavedLat = -34.6186
-	}
-	if input.SavedLng == 0 {
-		input.SavedLng = -58.4368
-	}
 
-	hashedPwd, err := auth.HashPassword(input.Password)
+	rawStreet := strings.TrimSpace(input.Address)
+	if rawStreet == "" {
+		rawStreet = strings.TrimSpace(input.SavedAddress)
+	}
+	geo := GeocodeArgentineAddress(
+		ctx,
+		input.Neighborhood,
+		rawStreet,
+		input.SavedLat,
+		input.SavedLng,
+	)
+	cleanNeighborhood := geo.Neighborhood
+	input.SavedAddress = geo.FormattedAddress
+	input.SavedLat = geo.Lat
+	input.SavedLng = geo.Lng
+
+	pwdToHash := input.Password
+	if len(pwdToHash) > 72 {
+		pwdToHash = pwdToHash[:72]
+	}
+	hashedPwd, err := auth.HashPassword(pwdToHash)
 	if err != nil {
 		return nil, err
 	}
 
 	var u models.User
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO users (full_name, email, phone, password_hash, auth_provider, saved_address, saved_lat, saved_lng, role)
-		VALUES ($1, LOWER(TRIM($2)), $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO users (full_name, email, phone, password_hash, google_sub, auth_provider, saved_address, saved_lat, saved_lng, role)
+		VALUES ($1, LOWER(TRIM($2)), $3, $4, NULLIF($5, ''), $6, $7, $8, $9, $10)
 		RETURNING id, full_name, email, phone, role, auth_provider, saved_address, saved_lat, saved_lng, created_at
-	`, input.FullName, input.Email, input.Phone, hashedPwd, input.AuthProvider, input.SavedAddress, input.SavedLat, input.SavedLng, input.Role).Scan(
+	`, input.FullName, input.Email, input.Phone, hashedPwd, strings.TrimSpace(input.GoogleSub), input.AuthProvider, input.SavedAddress, input.SavedLat, input.SavedLng, input.Role).Scan(
 		&u.ID, &u.FullName, &u.Email, &u.Phone, &u.Role, &u.AuthProvider, &u.SavedAddress, &u.SavedLat, &u.SavedLng, &u.CreatedAt,
 	)
 	if err != nil {
@@ -132,7 +578,7 @@ func (s *PostgresStore) RegisterUser(ctx context.Context, input models.RegisterU
 		return nil, err
 	}
 
-	// Si se registra como profesional, creamos automáticamente su fila inicial en professional_profiles
+	// Si se registra como profesional, creamos automáticamente su fila inicial en professional_profiles con su barrio y ubicación PostGIS real (BE-2.1)
 	if u.Role == "professional" {
 		var profID string
 		err = tx.QueryRowContext(ctx, `
@@ -142,12 +588,12 @@ func (s *PostgresStore) RegisterUser(ctx context.Context, input models.RegisterU
 			)
 			VALUES (
 				$1, 1, 'Profesional de Oficio', 'Vecino profesional registrado en Guía de Oficios.',
-				'Caballito, CABA', 5,
-				ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
+				$2, 5,
+				ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography,
 				TRUE, 'pending_review'
 			)
 			RETURNING id
-		`, u.ID, u.SavedLng, u.SavedLat).Scan(&profID)
+		`, u.ID, cleanNeighborhood, u.SavedLng, u.SavedLat).Scan(&profID)
 		if err != nil {
 			return nil, err
 		}
@@ -197,31 +643,19 @@ func (s *PostgresStore) AuthenticateUser(ctx context.Context, identifier, passwo
 }
 
 func (s *PostgresStore) AuthenticateGoogle(ctx context.Context, input models.GoogleAuthInput) (*models.User, error) {
-	// Si viene un id_token JWT de Google, extraemos email y nombre del payload si no vinieron explícitos
-	if strings.TrimSpace(input.IDToken) != "" && (strings.TrimSpace(input.Email) == "" || strings.TrimSpace(input.FullName) == "") {
-		parts := strings.Split(strings.TrimSpace(input.IDToken), ".")
-		if len(parts) == 3 {
-			if payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
-				var claims struct {
-					Email string `json:"email"`
-					Name  string `json:"name"`
-				}
-				if json.Unmarshal(payloadBytes, &claims) == nil {
-					if strings.TrimSpace(input.Email) == "" && claims.Email != "" {
-						input.Email = claims.Email
-					}
-					if strings.TrimSpace(input.FullName) == "" && claims.Name != "" {
-						input.FullName = claims.Name
-					}
-				}
-			}
-		}
+	// BE-2.2: Validar criptográficamente el id_token (prohibido iniciar sesión enviando solo un email en texto plano sin firma)
+	claims, err := auth.VerifyGoogleIDToken(input.IDToken)
+	if err != nil {
+		return nil, err
 	}
 
-	input.Email = strings.TrimSpace(input.Email)
-	input.FullName = strings.TrimSpace(input.FullName)
-	if input.Email == "" || !strings.Contains(input.Email, "@") {
-		return nil, errors.New("se requiere un correo de Google válido")
+	if strings.TrimSpace(input.Email) != "" && !strings.EqualFold(strings.TrimSpace(input.Email), claims.Email) {
+		return nil, errors.New("el correo enviado no coincide con el token firmado de Google")
+	}
+
+	input.Email = claims.Email
+	if strings.TrimSpace(input.FullName) == "" {
+		input.FullName = strings.TrimSpace(claims.Name)
 	}
 	if input.FullName == "" {
 		localPart := strings.Split(input.Email, "@")[0]
@@ -234,26 +668,33 @@ func (s *PostgresStore) AuthenticateGoogle(ctx context.Context, input models.Goo
 	// Buscar si ya existe por email
 	var u models.User
 	var profID sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	var existingGoogleSub sql.NullString
+	err = s.db.QueryRowContext(ctx, `
 		SELECT u.id, u.full_name, u.email, u.phone, u.role, u.auth_provider,
 		       u.saved_address, u.saved_lat, u.saved_lng, u.created_at,
-		       p.id AS professional_id
+		       p.id AS professional_id, u.google_sub
 		FROM users u
 		LEFT JOIN professional_profiles p ON p.user_id = u.id
 		WHERE LOWER(u.email) = LOWER(TRIM($1))
 	`, input.Email).Scan(
 		&u.ID, &u.FullName, &u.Email, &u.Phone, &u.Role, &u.AuthProvider,
-		&u.SavedAddress, &u.SavedLat, &u.SavedLng, &u.CreatedAt, &profID,
+		&u.SavedAddress, &u.SavedLat, &u.SavedLng, &u.CreatedAt, &profID, &existingGoogleSub,
 	)
 	if err == nil {
+		if existingGoogleSub.Valid && existingGoogleSub.String != "" && claims.Sub != "" && existingGoogleSub.String != claims.Sub {
+			return nil, errors.New("el identificador de cuenta de Google no coincide con el registrado")
+		}
+		if (!existingGoogleSub.Valid || existingGoogleSub.String == "") && claims.Sub != "" {
+			_, _ = s.db.ExecContext(ctx, `UPDATE users SET google_sub = $1 WHERE id = $2`, claims.Sub, u.ID)
+		}
 		u.ProfessionalID = profID.String
 		return &u, nil
 	}
 
-	// Si no existe, lo registramos en PostgreSQL con auth_provider = "google"
-	pwdSeed := input.IDToken
-	if pwdSeed == "" {
-		pwdSeed = "google-oauth-" + input.Email
+	// Si no existe, lo registramos en PostgreSQL con auth_provider = "google" y su google_sub verificado
+	pwdSeed := "g-oauth-" + claims.Sub
+	if len(pwdSeed) > 60 {
+		pwdSeed = pwdSeed[:60]
 	}
 	return s.RegisterUser(ctx, models.RegisterUserInput{
 		FullName:     input.FullName,
@@ -262,6 +703,9 @@ func (s *PostgresStore) AuthenticateGoogle(ctx context.Context, input models.Goo
 		Password:     pwdSeed,
 		Role:         input.Role,
 		AuthProvider: "google",
+		GoogleSub:    claims.Sub,
+		Neighborhood: input.Neighborhood,
+		Address:      input.Address,
 	})
 }
 
@@ -288,21 +732,32 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, userID string) (*models
 }
 
 func (s *PostgresStore) UpdateUserAddress(ctx context.Context, userID string, input models.UpdateAddressInput) (*models.User, error) {
-	if input.SavedLat == 0 {
-		input.SavedLat = -34.6186
-	}
-	if input.SavedLng == 0 {
-		input.SavedLng = -58.4368
-	}
+	geo := GeocodeArgentineAddress(
+		ctx,
+		input.Neighborhood,
+		input.SavedAddress,
+		input.SavedLat,
+		input.SavedLng,
+	)
 
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE users
 		SET saved_address = $1, saved_lat = $2, saved_lng = $3
 		WHERE id::text = $4
-	`, input.SavedAddress, input.SavedLat, input.SavedLng, userID)
+	`, geo.FormattedAddress, geo.Lat, geo.Lng, userID)
 	if err != nil {
 		return nil, err
 	}
+
+	// Si el usuario tiene perfil profesional, sincronizamos también su localidad y ubicación PostGIS
+	_, _ = s.db.ExecContext(ctx, `
+		UPDATE professional_profiles
+		SET neighborhood = $1,
+		    base_location = ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
+		    updated_at = NOW()
+		WHERE user_id::text = $4
+	`, geo.Neighborhood, geo.Lng, geo.Lat, userID)
+
 	return s.GetUserByID(ctx, userID)
 }
 

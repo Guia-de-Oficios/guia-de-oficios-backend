@@ -75,6 +75,16 @@ func (s *testStore) Ping(_ context.Context) (string, error) {
 }
 
 func (s *testStore) RegisterUser(_ context.Context, input models.RegisterUserInput) (*models.User, error) {
+	rawStreet := strings.TrimSpace(input.Address)
+	if rawStreet == "" {
+		rawStreet = strings.TrimSpace(input.SavedAddress)
+	}
+	cleanNeighborhood, resolvedAddr, resolvedLat, resolvedLng := repository.ResolveNeighborhoodCoordinates(
+		input.Neighborhood,
+		rawStreet,
+		input.SavedLat,
+		input.SavedLng,
+	)
 	u := models.User{
 		ID:           "user-new-001",
 		FullName:     input.FullName,
@@ -82,7 +92,20 @@ func (s *testStore) RegisterUser(_ context.Context, input models.RegisterUserInp
 		Email:        strings.ToLower(input.Email),
 		Role:         input.Role,
 		AuthProvider: "manual",
-		SavedAddress: input.SavedAddress,
+		SavedAddress: resolvedAddr,
+		SavedLat:     resolvedLat,
+		SavedLng:     resolvedLng,
+	}
+	if u.Role == "professional" {
+		u.ProfessionalID = "prof-new-001"
+		s.pros[u.ProfessionalID] = models.ProfessionalDetail{
+			ProfessionalSummary: models.ProfessionalSummary{
+				ID:           u.ProfessionalID,
+				UserID:       u.ID,
+				FullName:     u.FullName,
+				Neighborhood: cleanNeighborhood,
+			},
+		}
 	}
 	if input.Password != "" {
 		h, _ := auth.HashPassword(input.Password)
@@ -108,10 +131,14 @@ func (s *testStore) AuthenticateUser(_ context.Context, email, password string) 
 }
 
 func (s *testStore) AuthenticateGoogle(_ context.Context, input models.GoogleAuthInput) (*models.User, error) {
+	claims, err := auth.VerifyGoogleIDToken(input.IDToken)
+	if err != nil {
+		return nil, err
+	}
 	u := models.User{
 		ID:           "user-google-001",
-		FullName:     input.FullName,
-		Email:        strings.ToLower(input.Email),
+		FullName:     claims.Name,
+		Email:        claims.Email,
 		Role:         input.Role,
 		AuthProvider: "google",
 	}
@@ -252,6 +279,7 @@ func (s *testStore) GetProfessionalDashboard(_ context.Context, profID string) (
 }
 
 func TestStitchFullWorkflowAPI(t *testing.T) {
+	t.Setenv("DISABLE_EXTERNAL_GEOCODE", "true")
 	store := newTestStore()
 	tmpUploadDir := t.TempDir()
 	h := NewAPIHandler(store, "postgresql+postgis", tmpUploadDir)
@@ -259,14 +287,38 @@ func TestStitchFullWorkflowAPI(t *testing.T) {
 	h.RegisterRoutes(rawMux)
 	mux := telemetry.ObservabilityMiddleware(rawMux)
 
-	// 1. Pantalla 2: Registro de usuario con contraseña y obtención de JWT + Propagación de X-Trace-ID
+	// 0. Endpoint de validación/geocodificación dinámica (Gran Mendoza y Luján PBA)
+	for _, tc := range []struct {
+		locality string
+		address  string
+		wantLat  float64
+	}{
+		{locality: "Luján, Buenos Aires", address: "San Martín 1250", wantLat: -34.5703},
+		{locality: "Godoy Cruz, Mendoza", address: "Av. San Martín Sur 850", wantLat: -32.9253},
+	} {
+		reqGeo := httptest.NewRequest(http.MethodGet, "/api/v1/geocode?locality="+strings.ReplaceAll(tc.locality, " ", "+")+"&address="+strings.ReplaceAll(tc.address, " ", "+"), nil)
+		recGeo := httptest.NewRecorder()
+		mux.ServeHTTP(recGeo, reqGeo)
+		if recGeo.Code != http.StatusOK {
+			t.Fatalf("esperaba 200 en /api/v1/geocode para %s, obtuvo %d", tc.locality, recGeo.Code)
+		}
+		var geoRes models.GeocodeResult
+		_ = json.Unmarshal(recGeo.Body.Bytes(), &geoRes)
+		if geoRes.Lat != tc.wantLat || !geoRes.Verified {
+			t.Fatalf("esperaba lat=%v y verified=true para %s, obtuvo %+v", tc.wantLat, tc.locality, geoRes)
+		}
+	}
+
+	// 1. Pantalla 2: Registro de usuario con barrio/dirección real (BE-2.1) y obtención de JWT + Propagación de X-Trace-ID
 	regPayload := models.RegisterUserInput{
 		FullName:     "Carlos Alberto Gómez",
-		Phone:        "11 5544-3322",
+		Phone:        "+54 9 11 5544-3322",
 		Email:        "carlos.nuevo@correo.com",
 		Password:     "MiClaveSegura2026",
 		Role:         "client",
 		AuthProvider: "manual",
+		Neighborhood: "Palermo, CABA",
+		Address:      "Av. Santa Fe 3420",
 	}
 	regBody, _ := json.Marshal(regPayload)
 	reqReg := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(regBody))
@@ -283,6 +335,33 @@ func TestStitchFullWorkflowAPI(t *testing.T) {
 	_ = json.Unmarshal(recReg.Body.Bytes(), &authRes)
 	if authRes.Token == "" {
 		t.Fatalf("esperaba token JWT en registro")
+	}
+	if authRes.User.SavedAddress != "Av. Santa Fe 3420, Palermo, CABA" || authRes.User.SavedLat != -34.5889 {
+		t.Fatalf("esperaba dirección y coordenadas reales de Palermo, obtuvo addr=%q lat=%v", authRes.User.SavedAddress, authRes.User.SavedLat)
+	}
+
+	// 1b. Google Auth debe rechazar email en texto plano sin id_token firmado (BE-2.2)
+	unsignedGoogleBody := []byte(`{"id_token":"google-android-account-123","email":"intruso@gmail.com","role":"client"}`)
+	reqBadGoogle := httptest.NewRequest(http.MethodPost, "/api/v1/auth/google", bytes.NewReader(unsignedGoogleBody))
+	recBadGoogle := httptest.NewRecorder()
+	mux.ServeHTTP(recBadGoogle, reqBadGoogle)
+	if recBadGoogle.Code != http.StatusUnauthorized {
+		t.Fatalf("esperaba 401 al intentar Google Auth sin id_token firmado, obtuvo %d: %s", recBadGoogle.Code, recBadGoogle.Body.String())
+	}
+
+	// 1c. Google Auth con id_token firmado criptográficamente debe autenticar (BE-2.2)
+	signedGToken, _ := auth.GenerateGoogleIDToken("vecina.belgrano@gmail.com", "Marta López", "g-sub-999")
+	validGooglePayload := models.GoogleAuthInput{
+		IDToken: signedGToken,
+		Email:   "vecina.belgrano@gmail.com",
+		Role:    "client",
+	}
+	validGoogleBytes, _ := json.Marshal(validGooglePayload)
+	reqGoodGoogle := httptest.NewRequest(http.MethodPost, "/api/v1/auth/google", bytes.NewReader(validGoogleBytes))
+	recGoodGoogle := httptest.NewRecorder()
+	mux.ServeHTTP(recGoodGoogle, reqGoodGoogle)
+	if recGoodGoogle.Code != http.StatusOK {
+		t.Fatalf("esperaba 200 en Google Auth con id_token firmado, obtuvo %d: %s", recGoodGoogle.Code, recGoodGoogle.Body.String())
 	}
 
 	// 2. Login con credenciales válidas
