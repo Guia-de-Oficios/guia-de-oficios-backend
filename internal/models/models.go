@@ -49,9 +49,22 @@ type GoogleAuthInput struct {
 
 // UpdateAddressInput representa PATCH /api/v1/users/me/address (GDO-13).
 type UpdateAddressInput struct {
+	Neighborhood string  `json:"neighborhood,omitempty"`
 	SavedAddress string  `json:"saved_address"`
 	SavedLat     float64 `json:"saved_lat"`
 	SavedLng     float64 `json:"saved_lng"`
+}
+
+// GeocodeResult representa el resultado de validar y geocodificar una dirección o localidad de Argentina (Google Maps / Nominatim OSM / Catálogo Nacional).
+type GeocodeResult struct {
+	FormattedAddress string  `json:"formatted_address"`
+	Neighborhood     string  `json:"neighborhood"`
+	Locality         string  `json:"locality"`
+	Province         string  `json:"province"`
+	Lat              float64 `json:"lat"`
+	Lng              float64 `json:"lng"`
+	Source           string  `json:"source"`
+	Verified         bool    `json:"verified"`
 }
 
 // User representa un vecino o profesional autenticado.

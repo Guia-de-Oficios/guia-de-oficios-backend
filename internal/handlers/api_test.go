@@ -279,12 +279,35 @@ func (s *testStore) GetProfessionalDashboard(_ context.Context, profID string) (
 }
 
 func TestStitchFullWorkflowAPI(t *testing.T) {
+	t.Setenv("DISABLE_EXTERNAL_GEOCODE", "true")
 	store := newTestStore()
 	tmpUploadDir := t.TempDir()
 	h := NewAPIHandler(store, "postgresql+postgis", tmpUploadDir)
 	rawMux := http.NewServeMux()
 	h.RegisterRoutes(rawMux)
 	mux := telemetry.ObservabilityMiddleware(rawMux)
+
+	// 0. Endpoint de validación/geocodificación dinámica (Gran Mendoza y Luján PBA)
+	for _, tc := range []struct {
+		locality string
+		address  string
+		wantLat  float64
+	}{
+		{locality: "Luján, Buenos Aires", address: "San Martín 1250", wantLat: -34.5703},
+		{locality: "Godoy Cruz, Mendoza", address: "Av. San Martín Sur 850", wantLat: -32.9253},
+	} {
+		reqGeo := httptest.NewRequest(http.MethodGet, "/api/v1/geocode?locality="+strings.ReplaceAll(tc.locality, " ", "+")+"&address="+strings.ReplaceAll(tc.address, " ", "+"), nil)
+		recGeo := httptest.NewRecorder()
+		mux.ServeHTTP(recGeo, reqGeo)
+		if recGeo.Code != http.StatusOK {
+			t.Fatalf("esperaba 200 en /api/v1/geocode para %s, obtuvo %d", tc.locality, recGeo.Code)
+		}
+		var geoRes models.GeocodeResult
+		_ = json.Unmarshal(recGeo.Body.Bytes(), &geoRes)
+		if geoRes.Lat != tc.wantLat || !geoRes.Verified {
+			t.Fatalf("esperaba lat=%v y verified=true para %s, obtuvo %+v", tc.wantLat, tc.locality, geoRes)
+		}
+	}
 
 	// 1. Pantalla 2: Registro de usuario con barrio/dirección real (BE-2.1) y obtención de JWT + Propagación de X-Trace-ID
 	regPayload := models.RegisterUserInput{

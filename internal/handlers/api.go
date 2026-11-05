@@ -60,6 +60,7 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/google", h.handleGoogleAuth)
 	mux.HandleFunc("GET /api/v1/auth/me", h.withOptionalAuth(h.handleGetCurrentUser))
 	mux.HandleFunc("PATCH /api/v1/users/me/address", h.withOptionalAuth(h.handleUpdateUserAddress))
+	mux.HandleFunc("GET /api/v1/geocode", h.handleGeocodeAddress)
 
 	// Pantalla 3: Cliente Inicio, Categorías y Asistente "¿No sabés qué profesional necesitás?" (GDO-14)
 	mux.HandleFunc("GET /api/v1/categories", h.handleListCategories)
@@ -272,11 +273,37 @@ func (h *APIHandler) handleUpdateUserAddress(w http.ResponseWriter, r *http.Requ
 	}
 	telemetry.LogAction(r.Context(), "users.update_address", map[string]any{
 		"user_id": userID,
-		"address": input.SavedAddress,
-		"lat":     input.SavedLat,
-		"lng":     input.SavedLng,
+		"address": user.SavedAddress,
+		"lat":     user.SavedLat,
+		"lng":     user.SavedLng,
 	})
 	writeJSON(w, http.StatusOK, user)
+}
+
+func (h *APIHandler) handleGeocodeAddress(w http.ResponseWriter, r *http.Request) {
+	locality := strings.TrimSpace(r.URL.Query().Get("locality"))
+	address := strings.TrimSpace(r.URL.Query().Get("address"))
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if address == "" && query != "" {
+		address = query
+	}
+	if locality == "" && address == "" {
+		writeError(w, http.StatusBadRequest, "Ingresá una localidad o dirección para validar en el mapa")
+		return
+	}
+
+	result := repository.GeocodeArgentineAddress(r.Context(), locality, address, 0, 0)
+	telemetry.LogAction(r.Context(), "geocode.validate", map[string]any{
+		"locality":          locality,
+		"address":           address,
+		"formatted_address": result.FormattedAddress,
+		"neighborhood":      result.Neighborhood,
+		"lat":               result.Lat,
+		"lng":               result.Lng,
+		"source":            result.Source,
+		"verified":          result.Verified,
+	})
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *APIHandler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
