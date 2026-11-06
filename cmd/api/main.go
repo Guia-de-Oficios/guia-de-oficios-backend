@@ -90,6 +90,7 @@ func runMigrations(ctx context.Context, db *sql.DB) error {
 	migrationFiles := []string{
 		"migrations/001_init.sql",
 		"migrations/002_seed.sql",
+		"migrations/003_seed_regions.sql",
 	}
 	for _, relPath := range migrationFiles {
 		path := filepath.Clean(relPath)

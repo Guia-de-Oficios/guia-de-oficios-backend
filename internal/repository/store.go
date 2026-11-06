@@ -1238,7 +1238,7 @@ func (s *PostgresStore) ListProfessionals(ctx context.Context, f ProfessionalFil
 	}
 	defer rows.Close()
 
-	var list []models.ProfessionalSummary
+	list := make([]models.ProfessionalSummary, 0)
 	for rows.Next() {
 		var item models.ProfessionalSummary
 		var specBytes []byte

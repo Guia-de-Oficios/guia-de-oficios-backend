@@ -505,6 +505,9 @@ func (h *APIHandler) handleListProfessionals(w http.ResponseWriter, r *http.Requ
 		"duration_ms":   fmt.Sprintf("%.2f", float64(elapsed.Microseconds())/1000.0),
 	})
 
+	if pros == nil {
+		pros = make([]models.ProfessionalSummary, 0)
+	}
 	writeJSON(w, http.StatusOK, pros)
 }
 
