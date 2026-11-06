@@ -35,6 +35,7 @@ type Store interface {
 	AuthenticateGoogle(ctx context.Context, input models.GoogleAuthInput) (*models.User, error)
 	GetUserByID(ctx context.Context, userID string) (*models.User, error)
 	UpdateUserAddress(ctx context.Context, userID string, input models.UpdateAddressInput) (*models.User, error)
+	UpdateUserProfile(ctx context.Context, userID string, input models.UpdateUserProfileInput) (*models.User, error)
 
 	// Categorías y Diagnóstico (Pantalla 3)
 	ListCategories(ctx context.Context) ([]models.Category, error)
@@ -110,7 +111,10 @@ var argentineLocalitiesCatalog = []neighborhoodCoord{
 	{Canonical: "Luján de Cuyo, Mendoza", Province: "Mendoza", Keywords: []string{"lujan de cuyo", "luján de cuyo", "chacras de coria", "vistalba", "carrodilla", "mayor drummond", "perdriel", "potrerillos"}, Lat: -33.0381, Lng: -68.8794},
 	{Canonical: "Maipú, Mendoza", Province: "Mendoza", Keywords: []string{"maipu", "maipú", "coquimbito", "luzuriaga", "gutierrez", "gutiérrez", "rodeo del medio"}, Lat: -32.9774, Lng: -68.7867},
 	{Canonical: "San Rafael, Mendoza", Province: "Mendoza", Keywords: []string{"san rafael"}, Lat: -34.6177, Lng: -68.3301},
-	{Canonical: "San Martín, Mendoza", Province: "Mendoza", Keywords: []string{"general san martin mendoza", "san martin mendoza"}, Lat: -33.0810, Lng: -68.4681},
+	{Canonical: "Palmira, San Martín, Mendoza", Province: "Mendoza", Keywords: []string{"palmira", "distrito palmira"}, Lat: -33.0546, Lng: -68.5613},
+	{Canonical: "San Martín, Mendoza", Province: "Mendoza", Keywords: []string{"general san martin mendoza", "san martin mendoza", "san martín, mendoza"}, Lat: -33.0810, Lng: -68.4681},
+	{Canonical: "Rivadavia, Mendoza", Province: "Mendoza", Keywords: []string{"rivadavia mendoza", "rivadavia, mendoza"}, Lat: -33.1905, Lng: -68.4608},
+	{Canonical: "Junín, Mendoza", Province: "Mendoza", Keywords: []string{"junin mendoza", "junín, mendoza"}, Lat: -33.1394, Lng: -68.4875},
 	{Canonical: "Tunuyán, Mendoza", Province: "Mendoza", Keywords: []string{"tunuyan", "tunuyán", "valle de uco"}, Lat: -33.5811, Lng: -69.0185},
 	{Canonical: "Ciudad de Mendoza, Mendoza", Province: "Mendoza", Keywords: []string{"ciudad de mendoza", "mendoza capital", "microcentro mendoza", "quinta seccion", "quinta sección", "sexta seccion", "sexta sección", "cuarta seccion", "mendoza"}, Lat: -32.8895, Lng: -68.8458},
 
@@ -517,6 +521,270 @@ func GeocodeArgentineAddress(ctx context.Context, neighborhood, rawAddress strin
 	}
 }
 
+// SuggestArgentineLocations devuelve sugerencias de autocompletado en tiempo real para localidades o direcciones normalizadas en Argentina.
+func SuggestArgentineLocations(ctx context.Context, suggestType, locality, query string) []models.GeocodeSuggestion {
+	qTrim := strings.TrimSpace(query)
+	locTrim := strings.TrimSpace(locality)
+	if len(qTrim) < 2 {
+		return []models.GeocodeSuggestion{}
+	}
+
+	var suggestions []models.GeocodeSuggestion
+	seen := make(map[string]bool)
+
+	addUnique := func(item models.GeocodeSuggestion) {
+		key := strings.ToLower(strings.TrimSpace(item.Label))
+		if key == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		suggestions = append(suggestions, item)
+	}
+
+	// Caso 1: Autocompletado de Localidad / Ciudad / Barrio en toda Argentina
+	if suggestType == "locality" {
+		qLower := strings.ToLower(qTrim)
+		// 1a. Coincidencias instantáneas del catálogo nacional
+		for _, c := range argentineLocalitiesCatalog {
+			matched := strings.Contains(strings.ToLower(c.Canonical), qLower)
+			if !matched {
+				for _, kw := range c.Keywords {
+					if strings.Contains(kw, qLower) {
+						matched = true
+						break
+					}
+				}
+			}
+			if matched {
+				addUnique(models.GeocodeSuggestion{
+					Label:    c.Canonical,
+					Subtitle: "Provincia / Zona: " + c.Province,
+					Locality: c.Canonical,
+					Province: c.Province,
+					Lat:      c.Lat,
+					Lng:      c.Lng,
+					Source:   "local_catalog",
+				})
+			}
+		}
+
+		if os.Getenv("DISABLE_EXTERNAL_GEOCODE") != "true" {
+			// 1b. API Oficial Georef Argentina (Datos Abiertos del Estado Nacional: todas las localidades censales de Argentina)
+			reqCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
+			defer cancel()
+			georefURL := fmt.Sprintf("https://apis.datos.gob.ar/georef/api/localidades?nombre=%s&max=6&aplanar=true", url.QueryEscape(qTrim))
+			if req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, georefURL, nil); err == nil {
+				if resp, err := http.DefaultClient.Do(req); err == nil {
+					defer resp.Body.Close()
+					var payload struct {
+						Localidades []struct {
+							Nombre            string  `json:"nombre"`
+							MunicipioNombre   string  `json:"municipio_nombre"`
+							DepartamentoNombre string `json:"departamento_nombre"`
+							ProvinciaNombre   string  `json:"provincia_nombre"`
+							CentroideLat      float64 `json:"centroide_lat"`
+							CentroideLon      float64 `json:"centroide_lon"`
+						} `json:"localidades"`
+					}
+					if err := json.NewDecoder(resp.Body).Decode(&payload); err == nil {
+						for _, loc := range payload.Localidades {
+							locName := strings.Title(strings.ToLower(strings.TrimSpace(loc.Nombre)))
+							deptName := strings.Title(strings.ToLower(strings.TrimSpace(loc.DepartamentoNombre)))
+							provName := strings.TrimSpace(loc.ProvinciaNombre)
+							if strings.Contains(strings.ToLower(provName), "autónoma de buenos aires") {
+								provName = "CABA"
+							}
+							label := fmt.Sprintf("%s, %s", locName, provName)
+							if deptName != "" && !strings.EqualFold(locName, deptName) && provName != "CABA" {
+								label = fmt.Sprintf("%s, %s, %s", locName, deptName, provName)
+							}
+							addUnique(models.GeocodeSuggestion{
+								Label:    label,
+								Subtitle: fmt.Sprintf("Departamento %s · %s", deptName, provName),
+								Locality: label,
+								Province: provName,
+								Lat:      loc.CentroideLat,
+								Lng:      loc.CentroideLon,
+								Source:   "georef_ar",
+							})
+						}
+					}
+				}
+			}
+		}
+
+		if len(suggestions) > 8 {
+			return suggestions[:8]
+		}
+		return suggestions
+	}
+
+	// Caso 2: Autocompletado de Direcciones Normalizadas (Calle + Altura dentro de la localidad)
+	if os.Getenv("DISABLE_EXTERNAL_GEOCODE") != "true" {
+		// 2a. API Oficial Georef Direcciones (Normalizador de calles y alturas de Argentina)
+		reqCtx, cancel := context.WithTimeout(ctx, 2800*time.Millisecond)
+		defer cancel()
+
+		provFilter := ""
+		locFilter := locTrim
+		if strings.Contains(locTrim, ",") {
+			parts := strings.Split(locTrim, ",")
+			locFilter = strings.TrimSpace(parts[0])
+			provFilter = strings.TrimSpace(parts[len(parts)-1])
+		}
+
+		georefAddrURL := fmt.Sprintf("https://apis.datos.gob.ar/georef/api/direcciones?direccion=%s&max=5&aplanar=true", url.QueryEscape(qTrim))
+		if locFilter != "" {
+			georefAddrURL += "&localidad=" + url.QueryEscape(locFilter)
+		}
+		if provFilter != "" && !strings.EqualFold(provFilter, "Argentina") {
+			georefAddrURL += "&provincia=" + url.QueryEscape(provFilter)
+		}
+
+		if req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, georefAddrURL, nil); err == nil {
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				defer resp.Body.Close()
+				var payload struct {
+					Direcciones []struct {
+						Nomenclatura       string  `json:"nomenclatura"`
+						CalleNombre        string  `json:"calle_nombre"`
+						AlturaValor        int     `json:"altura_valor"`
+						LocalidadCensal    string  `json:"localidad_censal_nombre"`
+						DepartamentoNombre string  `json:"departamento_nombre"`
+						ProvinciaNombre    string  `json:"provincia_nombre"`
+						UbicacionLat       float64 `json:"ubicacion_lat"`
+						UbicacionLon       float64 `json:"ubicacion_lon"`
+					} `json:"direcciones"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&payload); err == nil {
+					for _, d := range payload.Direcciones {
+						street := strings.Title(strings.ToLower(strings.TrimSpace(d.CalleNombre)))
+						if d.AlturaValor > 0 {
+							street = fmt.Sprintf("%s %d", street, d.AlturaValor)
+						} else if street == "" {
+							street = d.Nomenclatura
+						}
+						city := strings.Title(strings.ToLower(strings.TrimSpace(firstNonEmpty(d.LocalidadCensal, d.DepartamentoNombre, locFilter))))
+						prov := strings.TrimSpace(d.ProvinciaNombre)
+						if strings.Contains(strings.ToLower(prov), "autónoma de buenos aires") {
+							prov = "CABA"
+						}
+						localityLabel := city
+						if prov != "" && city != "" && !strings.EqualFold(city, prov) {
+							localityLabel = fmt.Sprintf("%s, %s", city, prov)
+						}
+						fullLabel := street
+						if localityLabel != "" {
+							fullLabel = fmt.Sprintf("%s, %s", street, localityLabel)
+						}
+						lat := d.UbicacionLat
+						lng := d.UbicacionLon
+						if lat == 0 || lng == 0 {
+							if matched := matchLocalCatalog(localityLabel); matched != nil {
+								lat = matched.Lat
+								lng = matched.Lng
+							}
+						}
+						addUnique(models.GeocodeSuggestion{
+							Label:         fullLabel,
+							Subtitle:      localityLabel,
+							Locality:      localityLabel,
+							Province:      prov,
+							StreetAddress: street,
+							Lat:           lat,
+							Lng:           lng,
+							Source:        "georef_ar",
+						})
+					}
+				}
+			}
+		}
+
+		// 2b. OpenStreetMap Nominatim para calles/lugares que no estén en el padrón Georef o búsquedas abiertas
+		if len(suggestions) < 5 {
+			searchCombined := qTrim
+			if locTrim != "" && !strings.Contains(strings.ToLower(qTrim), strings.ToLower(strings.Split(locTrim, ",")[0])) {
+				searchCombined = fmt.Sprintf("%s, %s", qTrim, locTrim)
+			}
+			nomURL := fmt.Sprintf(
+				"https://nominatim.openstreetmap.org/search?format=json&countrycodes=ar&limit=5&addressdetails=1&accept-language=es&q=%s",
+				url.QueryEscape(searchCombined+", Argentina"),
+			)
+			if req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, nomURL, nil); err == nil {
+				req.Header.Set("User-Agent", "GuiaDeOficiosArgentina/1.0 (soporte@guiadeoficios.ar)")
+				if resp, err := http.DefaultClient.Do(req); err == nil {
+					defer resp.Body.Close()
+					var results []struct {
+						DisplayName string            `json:"display_name"`
+						Lat         string            `json:"lat"`
+						Lon         string            `json:"lon"`
+						Address     map[string]string `json:"address"`
+					}
+					if err := json.NewDecoder(resp.Body).Decode(&results); err == nil {
+						for _, item := range results {
+							lat, err1 := strconv.ParseFloat(item.Lat, 64)
+							lng, err2 := strconv.ParseFloat(item.Lon, 64)
+							if err1 != nil || err2 != nil {
+								continue
+							}
+							addr := item.Address
+							road := firstNonEmpty(addr["road"], addr["pedestrian"], qTrim)
+							houseNum := addr["house_number"]
+							street := road
+							if houseNum != "" && !strings.Contains(street, houseNum) {
+								street = fmt.Sprintf("%s %s", road, houseNum)
+							}
+							city := firstNonEmpty(addr["city"], addr["town"], addr["village"], addr["suburb"], addr["municipality"], locFilter)
+							state := strings.TrimSpace(strings.ReplaceAll(addr["state"], "Provincia de ", ""))
+							if strings.Contains(strings.ToLower(state), "autónoma de buenos aires") {
+								state = "CABA"
+							}
+							localityLabel := city
+							if state != "" && city != "" && !strings.EqualFold(city, state) {
+								localityLabel = fmt.Sprintf("%s, %s", city, state)
+							}
+							fullLabel := street
+							if localityLabel != "" {
+								fullLabel = fmt.Sprintf("%s, %s", street, localityLabel)
+							}
+							addUnique(models.GeocodeSuggestion{
+								Label:         fullLabel,
+								Subtitle:      localityLabel,
+								Locality:      localityLabel,
+								Province:      state,
+								StreetAddress: street,
+								Lat:           lat,
+								Lng:           lng,
+								Source:        "nominatim_osm",
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Fallback instantáneo si está en modo test/offline
+	if len(suggestions) == 0 {
+		geo := GeocodeArgentineAddress(ctx, locTrim, qTrim, 0, 0)
+		addUnique(models.GeocodeSuggestion{
+			Label:         geo.FormattedAddress,
+			Subtitle:      geo.Neighborhood,
+			Locality:      geo.Neighborhood,
+			Province:      geo.Province,
+			StreetAddress: qTrim,
+			Lat:           geo.Lat,
+			Lng:           geo.Lng,
+			Source:        geo.Source,
+		})
+	}
+
+	if len(suggestions) > 6 {
+		return suggestions[:6]
+	}
+	return suggestions
+}
+
 // ResolveNeighborhoodCoordinates mantiene compatibilidad con llamadas directas devolviendo (barrio, dirección, lat, lng)
 // pero utilizando el motor dinámico GeocodeArgentineAddress para cualquier punto del país.
 func ResolveNeighborhoodCoordinates(neighborhood, rawAddress string, inputLat, inputLng float64) (cleanNeighborhood string, fullAddress string, lat float64, lng float64) {
@@ -542,17 +810,28 @@ func (s *PostgresStore) RegisterUser(ctx context.Context, input models.RegisterU
 	if rawStreet == "" {
 		rawStreet = strings.TrimSpace(input.SavedAddress)
 	}
-	geo := GeocodeArgentineAddress(
-		ctx,
-		input.Neighborhood,
-		rawStreet,
-		input.SavedLat,
-		input.SavedLng,
-	)
-	cleanNeighborhood := geo.Neighborhood
-	input.SavedAddress = geo.FormattedAddress
-	input.SavedLat = geo.Lat
-	input.SavedLng = geo.Lng
+	cleanNeighborhood := strings.TrimSpace(input.Neighborhood)
+
+	// Si se registra con Google sin haber completado aún dirección ni localidad, dejamos saved_address vacío
+	// para que la app le muestre el alerta de "Completá los datos de tu perfil" en Inicio y Mi Cuenta.
+	if input.AuthProvider == "google" && rawStreet == "" && cleanNeighborhood == "" {
+		input.SavedAddress = ""
+		input.SavedLat = -32.8895
+		input.SavedLng = -68.8458
+		cleanNeighborhood = "Sin especificar"
+	} else {
+		geo := GeocodeArgentineAddress(
+			ctx,
+			input.Neighborhood,
+			rawStreet,
+			input.SavedLat,
+			input.SavedLng,
+		)
+		cleanNeighborhood = geo.Neighborhood
+		input.SavedAddress = geo.FormattedAddress
+		input.SavedLat = geo.Lat
+		input.SavedLng = geo.Lng
+	}
 
 	pwdToHash := input.Password
 	if len(pwdToHash) > 72 {
@@ -578,8 +857,20 @@ func (s *PostgresStore) RegisterUser(ctx context.Context, input models.RegisterU
 		return nil, err
 	}
 
-	// Si se registra como profesional, creamos automáticamente su fila inicial en professional_profiles con su barrio y ubicación PostGIS real (BE-2.1)
+	// Si se registra como profesional, creamos automáticamente su fila inicial en professional_profiles con su rubro, especialidad, radio y ubicación PostGIS real (BE-2.1)
 	if u.Role == "professional" {
+		catID := input.PrimaryCategoryID
+		if catID <= 0 || catID > 8 {
+			catID = 1
+		}
+		tradeTitle := strings.TrimSpace(input.TradeTitle)
+		if tradeTitle == "" {
+			tradeTitle = "Profesional de Oficio"
+		}
+		radiusKm := input.CoverageRadiusKm
+		if radiusKm <= 0 {
+			radiusKm = 10
+		}
 		var profID string
 		err = tx.QueryRowContext(ctx, `
 			INSERT INTO professional_profiles (
@@ -587,13 +878,13 @@ func (s *PostgresStore) RegisterUser(ctx context.Context, input models.RegisterU
 				coverage_radius_km, base_location, is_available_now, verification_status
 			)
 			VALUES (
-				$1, 1, 'Profesional de Oficio', 'Vecino profesional registrado en Guía de Oficios.',
-				$2, 5,
-				ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography,
+				$1, $2, $3, 'Vecino profesional registrado en Guía de Oficios.',
+				$4, $5,
+				ST_SetSRID(ST_MakePoint($6, $7), 4326)::geography,
 				TRUE, 'pending_review'
 			)
 			RETURNING id
-		`, u.ID, cleanNeighborhood, u.SavedLng, u.SavedLat).Scan(&profID)
+		`, u.ID, catID, tradeTitle, cleanNeighborhood, radiusKm, u.SavedLng, u.SavedLat).Scan(&profID)
 		if err != nil {
 			return nil, err
 		}
@@ -757,6 +1048,66 @@ func (s *PostgresStore) UpdateUserAddress(ctx context.Context, userID string, in
 		    updated_at = NOW()
 		WHERE user_id::text = $4
 	`, geo.Neighborhood, geo.Lng, geo.Lat, userID)
+
+	return s.GetUserByID(ctx, userID)
+}
+
+func (s *PostgresStore) UpdateUserProfile(ctx context.Context, userID string, input models.UpdateUserProfileInput) (*models.User, error) {
+	existing, err := s.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	fullName := strings.TrimSpace(input.FullName)
+	if fullName == "" {
+		fullName = existing.FullName
+	}
+	phone := strings.TrimSpace(input.Phone)
+	if phone == "" {
+		phone = existing.Phone
+	}
+
+	rawStreet := strings.TrimSpace(input.Address)
+	if rawStreet == "" {
+		rawStreet = strings.TrimSpace(input.SavedAddress)
+	}
+	geo := GeocodeArgentineAddress(
+		ctx,
+		input.Neighborhood,
+		rawStreet,
+		input.SavedLat,
+		input.SavedLng,
+	)
+
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE users
+		SET full_name = $1,
+		    phone = $2,
+		    saved_address = $3,
+		    saved_lat = $4,
+		    saved_lng = $5
+		WHERE id::text = $6
+	`, fullName, phone, geo.FormattedAddress, geo.Lat, geo.Lng, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Si el usuario tiene perfil profesional, sincronizamos también localidad, coordenadas PostGIS y opcionalmente rubro/especialidad
+	if existing.Role == "professional" {
+		catID := input.PrimaryCategoryID
+		tradeTitle := strings.TrimSpace(input.TradeTitle)
+		radiusKm := input.CoverageRadiusKm
+		_, _ = s.db.ExecContext(ctx, `
+			UPDATE professional_profiles
+			SET neighborhood = $1,
+			    base_location = ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
+			    primary_category_id = CASE WHEN $4 > 0 THEN $4 ELSE primary_category_id END,
+			    trade_title = CASE WHEN $5 <> '' THEN $5 ELSE trade_title END,
+			    coverage_radius_km = CASE WHEN $6 > 0 THEN $6 ELSE coverage_radius_km END,
+			    updated_at = NOW()
+			WHERE user_id::text = $7
+		`, geo.Neighborhood, geo.Lng, geo.Lat, catID, tradeTitle, radiusKm, userID)
+	}
 
 	return s.GetUserByID(ctx, userID)
 }

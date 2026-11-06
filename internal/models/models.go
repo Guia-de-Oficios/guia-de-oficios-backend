@@ -16,18 +16,21 @@ type Category struct {
 
 // RegisterUserInput representa el formulario de "registro_google_o_manual" (GDO-11, BE-2.1).
 type RegisterUserInput struct {
-	FullName     string  `json:"full_name"`
-	Phone        string  `json:"phone"`
-	Email        string  `json:"email"`
-	Password     string  `json:"password"`
-	Role         string  `json:"role"`                    // "client" | "professional"
-	AuthProvider string  `json:"auth_provider"`           // "manual" | "google"
-	GoogleSub    string  `json:"google_sub,omitempty"`
-	Neighborhood string  `json:"neighborhood,omitempty"`  // Barrio de CABA o GBA (ej: "Palermo, CABA")
-	Address      string  `json:"address,omitempty"`       // Calle y altura (ej: "Av. Santa Fe 3420")
-	SavedAddress string  `json:"saved_address,omitempty"` // Dirección completa combinada
-	SavedLat     float64 `json:"saved_lat,omitempty"`
-	SavedLng     float64 `json:"saved_lng,omitempty"`
+	FullName          string  `json:"full_name"`
+	Phone             string  `json:"phone"`
+	Email             string  `json:"email"`
+	Password          string  `json:"password"`
+	Role              string  `json:"role"`                    // "client" | "professional"
+	AuthProvider      string  `json:"auth_provider"`           // "manual" | "google"
+	GoogleSub         string  `json:"google_sub,omitempty"`
+	Neighborhood      string  `json:"neighborhood,omitempty"`  // Localidad / Barrio (ej: "Palmira, Mendoza")
+	Address           string  `json:"address,omitempty"`       // Calle y altura (ej: "Rivadavia 221")
+	SavedAddress      string  `json:"saved_address,omitempty"` // Dirección completa combinada
+	SavedLat          float64 `json:"saved_lat,omitempty"`
+	SavedLng          float64 `json:"saved_lng,omitempty"`
+	PrimaryCategoryID int     `json:"primary_category_id,omitempty"`
+	TradeTitle        string  `json:"trade_title,omitempty"`
+	CoverageRadiusKm  int     `json:"coverage_radius_km,omitempty"`
 }
 
 // LoginInput representa la petición a POST /api/v1/auth/login (GDO-11).
@@ -55,6 +58,20 @@ type UpdateAddressInput struct {
 	SavedLng     float64 `json:"saved_lng"`
 }
 
+// UpdateUserProfileInput representa PUT /api/v1/users/me para editar todos los datos del perfil (cliente o profesional).
+type UpdateUserProfileInput struct {
+	FullName          string  `json:"full_name"`
+	Phone             string  `json:"phone"`
+	Neighborhood      string  `json:"neighborhood,omitempty"`
+	Address           string  `json:"address,omitempty"`
+	SavedAddress      string  `json:"saved_address"`
+	SavedLat          float64 `json:"saved_lat"`
+	SavedLng          float64 `json:"saved_lng"`
+	PrimaryCategoryID int     `json:"primary_category_id,omitempty"`
+	TradeTitle        string  `json:"trade_title,omitempty"`
+	CoverageRadiusKm  int     `json:"coverage_radius_km,omitempty"`
+}
+
 // GeocodeResult representa el resultado de validar y geocodificar una dirección o localidad de Argentina (Google Maps / Nominatim OSM / Catálogo Nacional).
 type GeocodeResult struct {
 	FormattedAddress string  `json:"formatted_address"`
@@ -65,6 +82,18 @@ type GeocodeResult struct {
 	Lng              float64 `json:"lng"`
 	Source           string  `json:"source"`
 	Verified         bool    `json:"verified"`
+}
+
+// GeocodeSuggestion representa una sugerencia de autocompletado en tiempo real para localidad o calle normalizada.
+type GeocodeSuggestion struct {
+	Label         string  `json:"label"`
+	Subtitle      string  `json:"subtitle"`
+	Locality      string  `json:"locality"`
+	Province      string  `json:"province"`
+	StreetAddress string  `json:"street_address,omitempty"`
+	Lat           float64 `json:"lat"`
+	Lng           float64 `json:"lng"`
+	Source        string  `json:"source"`
 }
 
 // User representa un vecino o profesional autenticado.
