@@ -60,7 +60,9 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/google", h.handleGoogleAuth)
 	mux.HandleFunc("GET /api/v1/auth/me", h.withOptionalAuth(h.handleGetCurrentUser))
 	mux.HandleFunc("PATCH /api/v1/users/me/address", h.withOptionalAuth(h.handleUpdateUserAddress))
+	mux.HandleFunc("PUT /api/v1/users/me", h.withOptionalAuth(h.handleUpdateUserProfile))
 	mux.HandleFunc("GET /api/v1/geocode", h.handleGeocodeAddress)
+	mux.HandleFunc("GET /api/v1/geocode/suggest", h.handleGeocodeSuggest)
 
 	// Pantalla 3: Cliente Inicio, Categorías y Asistente "¿No sabés qué profesional necesitás?" (GDO-14)
 	mux.HandleFunc("GET /api/v1/categories", h.handleListCategories)
@@ -304,6 +306,61 @@ func (h *APIHandler) handleGeocodeAddress(w http.ResponseWriter, r *http.Request
 		"verified":          result.Verified,
 	})
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *APIHandler) handleGeocodeSuggest(w http.ResponseWriter, r *http.Request) {
+	suggestType := strings.TrimSpace(r.URL.Query().Get("type"))
+	if suggestType == "" {
+		suggestType = "locality"
+	}
+	locality := strings.TrimSpace(r.URL.Query().Get("locality"))
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		writeJSON(w, http.StatusOK, []models.GeocodeSuggestion{})
+		return
+	}
+
+	suggestions := repository.SuggestArgentineLocations(r.Context(), suggestType, locality, query)
+	telemetry.LogAction(r.Context(), "geocode.suggest", map[string]any{
+		"type":     suggestType,
+		"locality": locality,
+		"query":    query,
+		"count":    len(suggestions),
+	})
+	writeJSON(w, http.StatusOK, suggestions)
+}
+
+func (h *APIHandler) handleUpdateUserProfile(w http.ResponseWriter, r *http.Request) {
+	claims := getClaims(r)
+	if claims == nil || claims.UserID == "" {
+		writeError(w, http.StatusUnauthorized, "Debés iniciar sesión para actualizar tu perfil")
+		return
+	}
+	var input models.UpdateUserProfileInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "Datos de perfil inválidos")
+		return
+	}
+	if len(strings.TrimSpace(input.FullName)) < 3 {
+		writeError(w, http.StatusBadRequest, "El nombre y apellido debe tener al menos 3 letras")
+		return
+	}
+	userID := claims.UserID
+	user, err := h.store.UpdateUserProfile(r.Context(), userID, input)
+	if err != nil {
+		telemetry.LogError(r.Context(), "users.update_profile", err, map[string]any{"user_id": userID})
+		writeError(w, http.StatusInternalServerError, "No se pudo actualizar el perfil: "+err.Error())
+		return
+	}
+	telemetry.LogAction(r.Context(), "users.update_profile", map[string]any{
+		"user_id":   userID,
+		"full_name": user.FullName,
+		"phone":     user.Phone,
+		"address":   user.SavedAddress,
+		"lat":       user.SavedLat,
+		"lng":       user.SavedLng,
+	})
+	writeJSON(w, http.StatusOK, user)
 }
 
 func (h *APIHandler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
