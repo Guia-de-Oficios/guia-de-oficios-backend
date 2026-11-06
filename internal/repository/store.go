@@ -521,6 +521,74 @@ func GeocodeArgentineAddress(ctx context.Context, neighborhood, rawAddress strin
 	}
 }
 
+func queryGooglePlacesAutocomplete(ctx context.Context, suggestType, locality, query string) ([]models.GeocodeSuggestion, error) {
+	apiKey := strings.TrimSpace(os.Getenv("GOOGLE_MAPS_API_KEY"))
+	if apiKey == "" {
+		return nil, errors.New("GOOGLE_MAPS_API_KEY no configurada")
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 3000*time.Millisecond)
+	defer cancel()
+
+	input := strings.TrimSpace(query)
+	typesParam := "(regions)"
+	if suggestType == "address" {
+		typesParam = "address"
+		if strings.TrimSpace(locality) != "" {
+			input = fmt.Sprintf("%s, %s", strings.TrimSpace(query), strings.TrimSpace(locality))
+		}
+	}
+
+	endpoint := fmt.Sprintf(
+		"https://maps.googleapis.com/maps/api/place/autocomplete/json?input=%s&types=%s&components=country:ar&language=es&key=%s",
+		url.QueryEscape(input),
+		url.QueryEscape(typesParam),
+		url.QueryEscape(apiKey),
+	)
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var payload struct {
+		Status      string `json:"status"`
+		Predictions []struct {
+			Description          string `json:"description"`
+			PlaceID              string `json:"place_id"`
+			StructuredFormatting struct {
+				MainText      string `json:"main_text"`
+				SecondaryText string `json:"secondary_text"`
+			} `json:"structured_formatting"`
+		} `json:"predictions"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	if payload.Status != "OK" && payload.Status != "ZERO_RESULTS" {
+		return nil, fmt.Errorf("google places status: %s", payload.Status)
+	}
+
+	var results []models.GeocodeSuggestion
+	for _, p := range payload.Predictions {
+		label := strings.TrimSuffix(strings.TrimSpace(p.Description), ", Argentina")
+		results = append(results, models.GeocodeSuggestion{
+			Label:    label,
+			Subtitle: p.StructuredFormatting.SecondaryText,
+			Locality: label,
+			Source:   "google_places",
+		})
+	}
+	return results, nil
+}
+
 // SuggestArgentineLocations devuelve sugerencias de autocompletado en tiempo real para localidades o direcciones normalizadas en Argentina.
 func SuggestArgentineLocations(ctx context.Context, suggestType, locality, query string) []models.GeocodeSuggestion {
 	qTrim := strings.TrimSpace(query)
@@ -539,6 +607,19 @@ func SuggestArgentineLocations(ctx context.Context, suggestType, locality, query
 		}
 		seen[key] = true
 		suggestions = append(suggestions, item)
+	}
+
+	// Si está configurada GOOGLE_MAPS_API_KEY, priorizar Google Places Autocomplete oficial
+	if strings.TrimSpace(os.Getenv("GOOGLE_MAPS_API_KEY")) != "" && os.Getenv("DISABLE_EXTERNAL_GEOCODE") != "true" {
+		if googleSuggestions, err := queryGooglePlacesAutocomplete(ctx, suggestType, locality, query); err == nil && len(googleSuggestions) > 0 {
+			for _, gs := range googleSuggestions {
+				addUnique(gs)
+			}
+			if len(suggestions) > 8 {
+				return suggestions[:8]
+			}
+			return suggestions
+		}
 	}
 
 	// Caso 1: Autocompletado de Localidad / Ciudad / Barrio en toda Argentina
@@ -606,6 +687,38 @@ func SuggestArgentineLocations(ctx context.Context, suggestType, locality, query
 								Lat:      loc.CentroideLat,
 								Lng:      loc.CentroideLon,
 								Source:   "georef_ar",
+							})
+						}
+					}
+				}
+			}
+
+			// 1c. API Georef Departamentos (cubre Luján de Cuyo, Godoy Cruz, Guaymallén, etc. que en Argentina son departamentos)
+			georefDeptURL := fmt.Sprintf("https://apis.datos.gob.ar/georef/api/departamentos?nombre=%s&max=4&aplanar=true", url.QueryEscape(qTrim))
+			if reqD, err := http.NewRequestWithContext(reqCtx, http.MethodGet, georefDeptURL, nil); err == nil {
+				if respD, err := http.DefaultClient.Do(reqD); err == nil {
+					defer respD.Body.Close()
+					var payloadD struct {
+						Departamentos []struct {
+							Nombre          string  `json:"nombre"`
+							ProvinciaNombre string  `json:"provincia_nombre"`
+							CentroideLat    float64 `json:"centroide_lat"`
+							CentroideLon    float64 `json:"centroide_lon"`
+						} `json:"departamentos"`
+					}
+					if err := json.NewDecoder(respD.Body).Decode(&payloadD); err == nil {
+						for _, dept := range payloadD.Departamentos {
+							deptName := strings.Title(strings.ToLower(strings.TrimSpace(dept.Nombre)))
+							provName := strings.TrimSpace(dept.ProvinciaNombre)
+							label := fmt.Sprintf("%s, %s", deptName, provName)
+							addUnique(models.GeocodeSuggestion{
+								Label:    label,
+								Subtitle: fmt.Sprintf("Departamento / Municipio · %s", provName),
+								Locality: label,
+								Province: provName,
+								Lat:      dept.CentroideLat,
+								Lng:      dept.CentroideLon,
+								Source:   "georef_ar_dept",
 							})
 						}
 					}
@@ -1301,6 +1414,11 @@ func (s *PostgresStore) GetProfessionalByID(ctx context.Context, id string) (*mo
 	}
 
 	_ = json.Unmarshal(specBytes, &detail.Specialties)
+	if detail.Specialties == nil {
+		detail.Specialties = make([]string, 0)
+	}
+	detail.Portfolio = make([]models.PortfolioItem, 0)
+	detail.Reviews = make([]models.Review, 0)
 	detail.DistanceKm = 0.65
 	detail.DistanceLabel = "A 8 cuadras (650 metros)"
 	detail.RatingLabel = formatRatingLabel(detail.RatingAvg)

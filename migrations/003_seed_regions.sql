@@ -130,3 +130,14 @@ INSERT INTO professional_profiles (
     4.90, 87, 87, 14
 )
 ON CONFLICT (id) DO NOTHING;
+
+-- Portfolio y reseñas para profesionales de regiones
+INSERT INTO portfolio_items (id, professional_id, title, subtitle, image_url, is_verified) VALUES
+('dddd4444-4444-4444-4444-444444444441', 'cccc4444-4444-4444-4444-444444444442', 'Destapación integral de desagüe', 'Limpieza con máquina rotativa', 'https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=500', TRUE),
+('dddd3333-3333-3333-3333-333333333331', 'cccc3333-3333-3333-3333-333333333331', 'Instalación de termotanque 80L', 'Conexión reglamentaria Ecogas', 'https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=500', TRUE)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO reviews (id, professional_id, author_name, author_zone, rating, highlights, comment) VALUES
+('ffff4444-4444-4444-4444-444444444441', 'cccc4444-4444-4444-4444-444444444442', 'Estela V.', 'Vecina de Juana Koslay', 5, '["Puntualidad", "Solución rápida", "Precio justo"]'::jsonb, 'Llegó en media hora como prometió, solucionó la pérdida del baño y dejó todo impecable.'),
+('ffff3333-3333-3333-3333-333333333331', 'cccc3333-3333-3333-3333-333333333331', 'Raúl M.', 'Vecino de Palmira', 5, '["Matriculado", "Prolijo", "Garantía"]'::jsonb, 'Carlos es de total confianza, trabajo prolijo y matriculado en gas.')
+ON CONFLICT (id) DO NOTHING;
