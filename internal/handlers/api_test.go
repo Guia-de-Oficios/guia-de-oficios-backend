@@ -183,7 +183,13 @@ func (s *testStore) UpdateUserProfile(ctx context.Context, userID string, input 
 func (s *testStore) ListCategories(_ context.Context) ([]models.Category, error) {
 	return []models.Category{
 		{ID: 1, Name: "Plomero", Slug: "plomero"},
-		{ID: 2, Name: "Gasista", Slug: "gasista"},
+		{ID: 2, Name: "Electricista", Slug: "electricista"},
+		{ID: 3, Name: "Gasista", Slug: "gasista"},
+		{ID: 4, Name: "Aire acondicionado", Slug: "aire-acondicionado"},
+		{ID: 5, Name: "Pintor", Slug: "pintor"},
+		{ID: 6, Name: "Albañil", Slug: "albanil"},
+		{ID: 7, Name: "Jardinero", Slug: "jardinero"},
+		{ID: 8, Name: "Cerrajero", Slug: "cerrajero"},
 	}, nil
 }
 
@@ -565,5 +571,16 @@ func TestProtectedEndpointsAndOwnership(t *testing.T) {
 	mux.ServeHTTP(recAvailForbidden, reqAvailForbidden)
 	if recAvailForbidden.Code != http.StatusForbidden {
 		t.Fatalf("esperaba 403 al modificar perfil profesional ajeno, obtuvo %d: %s", recAvailForbidden.Code, recAvailForbidden.Body.String())
+	}
+
+	// 4. POST /api/v1/uploads sin JWT debe devolver 401 Unauthorized y sanitizar path traversal en category
+	reqUpNoAuth := httptest.NewRequest(http.MethodPost, "/api/v1/uploads", nil)
+	recUpNoAuth := httptest.NewRecorder()
+	mux.ServeHTTP(recUpNoAuth, reqUpNoAuth)
+	if recUpNoAuth.Code != http.StatusUnauthorized {
+		t.Fatalf("esperaba 401 en /api/v1/uploads sin token, obtuvo %d", recUpNoAuth.Code)
+	}
+	if gotCat := sanitizeUploadCategory("../../etc/passwd"); gotCat != "attachment" {
+		t.Fatalf("esperaba sanitización 'attachment' ante path traversal, obtuvo %q", gotCat)
 	}
 }

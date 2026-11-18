@@ -25,8 +25,9 @@ Repositorio oficial del servidor Backend para **Guía de Oficios**. Es una **API
 | **Paso 2** | `feat/paso-02-registro-barrio` | Registro con barrio/dirección, geocodificación nacional, autocompletado en vivo (`/geocode/suggest`) y validación criptográfica de `id_token` en Google Auth | ✅ **Completado** |
 | **Paso 3** | `fix/paso-03-middleware-jwt` | Middleware estricto `withRequiredAuth` (`401`), cierre de fuga de datos en `GET /api/v1/requests/my` (`BUG-03`), validación de dueño en endpoints de profesional (`BUG-07`) y flag `is_dni_verified` en `User` | ✅ **Completado** |
 | **Paso 4** | `feat/paso-04-perfil-usuario` | Edición integral de perfil (`PUT /api/v1/users/me`) e historial real de solicitudes del vecino (`GET /api/v1/requests/my`) | ✅ **Completado** |
-| **Paso 5** | `feat/paso-05-seed-y-coordenadas` | Semilla de al menos 16 profesionales verificados cubriendo los 8 rubros oficiales y geocodificador por barrio | 🔜 **Próximo paso** |
-| **Pasos 6–14** | `feat/paso-06...14` | Filtros PostGIS, distancia dinámica en ficha, ranking barrial, solicitudes reales, transición de estados `en_route`/`completed` y calificación transaccional | ⏳ Pendiente |
+| **Paso 5** | `feat/paso-05-seed-y-coordenadas` | Semilla de 16+ profesionales verificados cubriendo los 8 rubros oficiales, diagnóstico de los 8 oficios y geocodificador por barrio | ✅ **Completado** |
+| **Paso 6** | `feat/paso-06-filtros-postgis` | Búsqueda geoespacial PostGIS con los 4 filtros combinables y contadores | 🔜 **Próximo paso** |
+| **Pasos 7–14** | `feat/paso-07...14` | Distancia dinámica en ficha, ranking barrial, solicitudes reales, transición de estados `en_route`/`completed` y calificación transaccional | ⏳ Pendiente |
 
 ---
 
