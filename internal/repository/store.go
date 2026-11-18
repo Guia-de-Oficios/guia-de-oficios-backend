@@ -1014,11 +1014,12 @@ func (s *PostgresStore) AuthenticateUser(ctx context.Context, identifier, passwo
 	var u models.User
 	var pwdHash sql.NullString
 	var profID sql.NullString
+	var isDNIVerified bool
 
 	err := s.db.QueryRowContext(ctx, `
 		SELECT u.id, u.full_name, u.email, u.phone, u.role, u.auth_provider,
 		       u.saved_address, u.saved_lat, u.saved_lng, u.password_hash, u.created_at,
-		       p.id AS professional_id
+		       p.id AS professional_id, COALESCE(p.is_dni_verified, FALSE)
 		FROM users u
 		LEFT JOIN professional_profiles p ON p.user_id = u.id
 		WHERE LOWER(u.email) = LOWER(TRIM($1))
@@ -1029,7 +1030,7 @@ func (s *PostgresStore) AuthenticateUser(ctx context.Context, identifier, passwo
 		LIMIT 1
 	`, identifier).Scan(
 		&u.ID, &u.FullName, &u.Email, &u.Phone, &u.Role, &u.AuthProvider,
-		&u.SavedAddress, &u.SavedLat, &u.SavedLng, &pwdHash, &u.CreatedAt, &profID,
+		&u.SavedAddress, &u.SavedLat, &u.SavedLng, &pwdHash, &u.CreatedAt, &profID, &isDNIVerified,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1043,6 +1044,7 @@ func (s *PostgresStore) AuthenticateUser(ctx context.Context, identifier, passwo
 	}
 
 	u.ProfessionalID = profID.String
+	u.IsDNIVerified = isDNIVerified
 	return &u, nil
 }
 
@@ -1073,16 +1075,17 @@ func (s *PostgresStore) AuthenticateGoogle(ctx context.Context, input models.Goo
 	var u models.User
 	var profID sql.NullString
 	var existingGoogleSub sql.NullString
+	var isDNIVerified bool
 	err = s.db.QueryRowContext(ctx, `
 		SELECT u.id, u.full_name, u.email, u.phone, u.role, u.auth_provider,
 		       u.saved_address, u.saved_lat, u.saved_lng, u.created_at,
-		       p.id AS professional_id, u.google_sub
+		       p.id AS professional_id, u.google_sub, COALESCE(p.is_dni_verified, FALSE)
 		FROM users u
 		LEFT JOIN professional_profiles p ON p.user_id = u.id
 		WHERE LOWER(u.email) = LOWER(TRIM($1))
 	`, input.Email).Scan(
 		&u.ID, &u.FullName, &u.Email, &u.Phone, &u.Role, &u.AuthProvider,
-		&u.SavedAddress, &u.SavedLat, &u.SavedLng, &u.CreatedAt, &profID, &existingGoogleSub,
+		&u.SavedAddress, &u.SavedLat, &u.SavedLng, &u.CreatedAt, &profID, &existingGoogleSub, &isDNIVerified,
 	)
 	if err == nil {
 		if existingGoogleSub.Valid && existingGoogleSub.String != "" && claims.Sub != "" && existingGoogleSub.String != claims.Sub {
@@ -1092,6 +1095,7 @@ func (s *PostgresStore) AuthenticateGoogle(ctx context.Context, input models.Goo
 			_, _ = s.db.ExecContext(ctx, `UPDATE users SET google_sub = $1 WHERE id = $2`, claims.Sub, u.ID)
 		}
 		u.ProfessionalID = profID.String
+		u.IsDNIVerified = isDNIVerified
 		return &u, nil
 	}
 
@@ -1116,22 +1120,24 @@ func (s *PostgresStore) AuthenticateGoogle(ctx context.Context, input models.Goo
 func (s *PostgresStore) GetUserByID(ctx context.Context, userID string) (*models.User, error) {
 	var u models.User
 	var profID sql.NullString
+	var isDNIVerified bool
 
 	err := s.db.QueryRowContext(ctx, `
 		SELECT u.id, u.full_name, u.email, u.phone, u.role, u.auth_provider,
 		       u.saved_address, u.saved_lat, u.saved_lng, u.created_at,
-		       p.id AS professional_id
+		       p.id AS professional_id, COALESCE(p.is_dni_verified, FALSE)
 		FROM users u
 		LEFT JOIN professional_profiles p ON p.user_id = u.id
 		WHERE u.id::text = $1
 	`, userID).Scan(
 		&u.ID, &u.FullName, &u.Email, &u.Phone, &u.Role, &u.AuthProvider,
-		&u.SavedAddress, &u.SavedLat, &u.SavedLng, &u.CreatedAt, &profID,
+		&u.SavedAddress, &u.SavedLat, &u.SavedLng, &u.CreatedAt, &profID, &isDNIVerified,
 	)
 	if err != nil {
 		return nil, err
 	}
 	u.ProfessionalID = profID.String
+	u.IsDNIVerified = isDNIVerified
 	return &u, nil
 }
 
@@ -1591,6 +1597,12 @@ func (s *PostgresStore) ListServiceRequests(ctx context.Context, professionalID 
 }
 
 func (s *PostgresStore) ListClientServiceRequests(ctx context.Context, clientID string) ([]models.ServiceRequest, error) {
+	list := make([]models.ServiceRequest, 0)
+	trimmedClientID := strings.TrimSpace(clientID)
+	if trimmedClientID == "" {
+		return list, nil
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			r.id, COALESCE(r.client_id::text, ''), r.client_name, r.client_phone,
@@ -1602,15 +1614,14 @@ func (s *PostgresStore) ListClientServiceRequests(ctx context.Context, clientID 
 		FROM service_requests r
 		JOIN professional_profiles p ON p.id = r.professional_id
 		JOIN users u ON u.id = p.user_id
-		WHERE ($1::text = '' OR r.client_id::text = $1)
+		WHERE r.client_id::text = $1
 		ORDER BY r.created_at DESC
-	`, clientID)
+	`, trimmedClientID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var list []models.ServiceRequest
 	for rows.Next() {
 		var item models.ServiceRequest
 		if err := rows.Scan(

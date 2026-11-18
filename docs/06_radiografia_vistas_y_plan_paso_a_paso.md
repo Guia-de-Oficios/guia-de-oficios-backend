@@ -286,37 +286,37 @@ A continuación están los 14 Pasos ordenados desde el Login hasta el APK final.
 ### PASO 1 · Modularización de Pantallas, Selector de Rol Inicial y Login Bien Hecho (Vistas #1, #2 y #8)
 - **Rama Backend:** `feat/paso-01-auth-bcrypt` | **Rama Android:** `feat/paso-01-login-completo`
 - **Objetivo de Calidad:** Separar el archivo monolítico de Compose, crear el selector de rol inicial y rehacer el Login completo (sin el AlertDialog que se cierra solo, con estados de carga, errores por campo y bcrypt real en backend).
-- [ ] **`[AND-1.1]`** Separar `StitchWorkflowScreens.kt` en archivos individuales por pantalla dentro de `ui/screens/` (`RoleSelectionScreen.kt`, `WelcomeLoginScreen.kt`, `RegisterScreen.kt`, `SearchResultsScreen.kt`, `ProfessionalProfileScreen.kt`, etc.) para trabajar de a 2 sin conflictos de Git.
-- [ ] **`[AND-1.2]`** Crear el componente oficial `GdoLogoBadge` (Vista #1) respetando `logo_provisional_gdo/code.html` (escudo azul `#1E40AF`, llave inglesa blanca y círculo esmeralda `#15803D` con tilde en la esquina inferior derecha).
-- [ ] **`[AND-1.3]`** Crear `RoleSelectionScreen.kt` siguiendo `gu_a_de_oficios_servicios_y_oficios_vecinales/code.html` (Vista #8): tarjetas Radio de 96dp (*'Necesito un oficio para mi casa'* vs *'Ofrezco mis servicios de oficio'*), botón *'Comenzar ->'* de 56dp que pre-selecciona el rol para el registro, y enlace *'¿Ya tenés una cuenta? Iniciar sesión'*.
-- [ ] **`[AND-1.4]`** Eliminar `LoginCredentialsDialog` (el AlertDialog que hacía `showLoginDialog = false` antes de recibir respuesta de la API) y crear una vista/BottomSheet dedicada de Login con:
+- [x] **`[AND-1.1]`** Separar `StitchWorkflowScreens.kt` en archivos individuales por pantalla dentro de `ui/screens/` (`RoleSelectionScreen.kt`, `WelcomeLoginScreen.kt`, `RegisterScreen.kt`, `SearchResultsScreen.kt`, `ProfessionalProfileScreen.kt`, etc.) para trabajar de a 2 sin conflictos de Git.
+- [x] **`[AND-1.2]`** Crear el componente oficial `GdoLogoBadge` (Vista #1) respetando `logo_provisional_gdo/code.html` (escudo azul `#1E40AF`, llave inglesa blanca y círculo esmeralda `#15803D` con tilde en la esquina inferior derecha).
+- [x] **`[AND-1.3]`** Crear `RoleSelectionScreen.kt` siguiendo `gu_a_de_oficios_servicios_y_oficios_vecinales/code.html` (Vista #8): tarjetas Radio de 96dp (*'Necesito un oficio para mi casa'* vs *'Ofrezco mis servicios de oficio'*), botón *'Comenzar ->'* de 56dp que pre-selecciona el rol para el registro, y enlace *'¿Ya tenés una cuenta? Iniciar sesión'*.
+- [x] **`[AND-1.4]`** Eliminar `LoginCredentialsDialog` (el AlertDialog que hacía `showLoginDialog = false` antes de recibir respuesta de la API) y crear una vista/BottomSheet dedicada de Login con:
   - (a) campo Identificador (Email o Celular) de 56dp con KeyboardOptions,
   - (b) campo Contraseña con ojito mostrar/ocultar,
   - (c) mensaje de error inline en rojo dentro del formulario si las credenciales fallan (sin borrar lo que el usuario escribió),
   - (d) botón 'Ingresar' con spinner `CircularProgressIndicator` mientras `isLoading == true`, y
   - (e) flujo '¿Olvidaste tu contraseña?'.
-- [ ] **`[BE-1.5]`** En `internal/auth/jwt.go`, reemplazar el hash SHA-256 casero por `golang.org/x/crypto/bcrypt` (`GenerateFromPassword` y `CompareHashAndPassword`) y actualizar `migrations/002_seed.sql` para que los 3 usuarios semilla tengan su hash bcrypt real (eliminando el backdoor `if storedHash == ""`).
+- [x] **`[BE-1.5]`** En `internal/auth/jwt.go`, reemplazar el hash SHA-256 casero por `golang.org/x/crypto/bcrypt` (`GenerateFromPassword` y `CompareHashAndPassword`) y actualizar `migrations/002_seed.sql` para que los 3 usuarios semilla tengan su hash bcrypt real (eliminando el backdoor `if storedHash == ""`).
 
 ---
 
 ### PASO 2 · Registro Manual Completo, Dirección Barrial y Google Auth Seguro (Vista #3)
 - **Rama Backend:** `feat/paso-02-registro-barrio` | **Rama Android:** `feat/paso-02-registro-ui`
 - **Objetivo de Calidad:** Hacer que el Registro valide cada campo correctamente, guarde el barrio/dirección real del vecino o profesional, incluya los términos legales y elimine el diálogo de Google falso.
-- [ ] **`[BE-2.1]`** En `POST /api/v1/auth/register` (`api.go` y `store.go`), aceptar los campos `'neighborhood'` y `'address'` en el registro (en vez de clavar 'Av. Rivadavia 5420, Caballito' para todos) y asignar las coordenadas lat/lng reales del barrio elegido. Si `role == 'professional'`, crear también su registro inicial en la tabla `professionals`.
-- [ ] **`[BE-2.2]`** En `POST /api/v1/auth/google` (`store.go`), validar el `id_token` contra las claves públicas de Google (o el endpoint tokeninfo de Google) y no permitir el login solo por mandar un email en texto plano sin firma.
-- [ ] **`[AND-2.3]`** En `RegisterScreen.kt` (`registro_google_o_manual/code.html`), implementar:
+- [x] **`[BE-2.1]`** En `POST /api/v1/auth/register` (`api.go` y `store.go`), aceptar los campos `'neighborhood'` y `'address'` en el registro (en vez de clavar 'Av. Rivadavia 5420, Caballito' para todos) y asignar las coordenadas lat/lng reales del barrio elegido. Si `role == 'professional'`, crear también su registro inicial en la tabla `professionals`.
+- [x] **`[BE-2.2]`** En `POST /api/v1/auth/google` (`store.go`), validar el `id_token` contra las claves públicas de Google (o el endpoint tokeninfo de Google) y no permitir el login solo por mandar un email en texto plano sin firma.
+- [x] **`[AND-2.3]`** En `RegisterScreen.kt` (`registro_google_o_manual/code.html`), implementar:
   - (a) selector de Rol (*'Soy Vecino / Cliente'* vs *'Soy Profesional'*) con borde azul, fondo `#EFF6FF` y tilde verde,
   - (b) validación individual con `isError` + `supportingText` en Nombre (>= 3 letras), Teléfono celular argentino (normalizando `+54 9 11`), Email válido (`Patterns.EMAIL_ADDRESS`), Barrio (selector desplegable de barrios de CABA/GBA) y Dirección, y Contraseña (>= 6 caracteres).
-- [ ] **`[AND-2.4]`** Agregar al pie del formulario el bloque de aceptación de *'Términos de Convivencia Vecinal y Política de Privacidad'* con diálogo de lectura accesible, y eliminar `GoogleAccountInputDialog` (el popup que permitía tipear cualquier correo sin contraseña).
+- [x] **`[AND-2.4]`** Agregar al pie del formulario el bloque de aceptación de *'Términos de Convivencia Vecinal y Política de Privacidad'* con diálogo de lectura accesible, y eliminar `GoogleAccountInputDialog` (el popup que permitía tipear cualquier correo sin contraseña).
 
 ---
 
 ### PASO 3 · Redirección Inteligente por Rol, Sesión JWT y Blindaje de Endpoints
 - **Rama Backend:** `fix/paso-03-middleware-jwt` | **Rama Android:** `fix/paso-03-navegacion-roles`
 - **Objetivo de Calidad:** Que cada usuario entre a la pantalla que corresponde a su rol (Vecino vs Profesional nuevo vs Profesional verificado) y que ningún endpoint privado funcione sin JWT válido.
-- [ ] **`[BE-3.1]`** En `internal/handlers/api.go`, cambiar `withOptionalAuth` por un middleware estricto `withRequiredAuth` (devuelve 401 Unauthorized si falta o expiró el Bearer token) en: `GET /api/v1/requests/my`, `POST /api/v1/requests`, `POST /api/v1/reviews`, `PATCH /api/v1/users/me/address`, `POST /api/v1/professionals/{id}/verification` y `PATCH /api/v1/professionals/{id}/availability`.
-- [ ] **`[BE-3.2]`** Corregir la fuga de datos en `GET /api/v1/requests/my` (BUG-03) eliminando la condición SQL (`$1::text = ''`) y validar en los endpoints de profesional que el usuario autenticado sea dueño de ese `professional_id` (BUG-07).
-- [ ] **`[AND-3.3]`** En `MainActivity.kt` (corrige BUG-01), unificar la función `navigateAfterAuth(user)`:
+- [x] **`[BE-3.1]`** En `internal/handlers/api.go`, cambiar `withOptionalAuth` por un middleware estricto `withRequiredAuth` (devuelve 401 Unauthorized si falta o expiró el Bearer token) en: `GET /api/v1/requests/my`, `POST /api/v1/requests`, `POST /api/v1/reviews`, `PATCH /api/v1/users/me/address`, `POST /api/v1/professionals/{id}/verification` y `PATCH /api/v1/professionals/{id}/availability`.
+- [x] **`[BE-3.2]`** Corregir la fuga de datos en `GET /api/v1/requests/my` (BUG-03) eliminando la condición SQL (`$1::text = ''`) y validar en los endpoints de profesional que el usuario autenticado sea dueño de ese `professional_id` (BUG-07).
+- [x] **`[AND-3.3]`** En `MainActivity.kt` (corrige BUG-01), unificar la función `navigateAfterAuth(user)`:
   - (a) si `user.role == 'client'` -> ir a `ClientHomeCategories`;
   - (b) si `user.role == 'professional'` recién registrado o sin DNI cargado -> ir a `ProfessionalVerificationOnboarding` (Vista #13);
   - (c) si `user.role == 'professional'` ya dado de alta -> ir directo a `ProfessionalDashboard` (Vista #14). Hacer lo mismo al restaurar sesión desde `SessionDataStore` al abrir la app.
@@ -326,12 +326,12 @@ A continuación están los 14 Pasos ordenados desde el Login hasta el APK final.
 ### PASO 4 · Barra Superior, Barra Inferior y Pantalla 'Mi Cuenta' Diferenciada por Rol
 - **Rama Backend:** `feat/paso-04-perfil-usuario` | **Rama Android:** `fix/paso-04-barras-y-cuenta`
 - **Objetivo de Calidad:** Corregir los botones repetidos del TopAppBar, arreglar las pestañas del BottomNavBar y separar qué ve un Vecino vs un Profesional en 'Mi Cuenta'.
-- [ ] **`[AND-4.1]`** En `StitchTopAppBar` (`StitchNavigation.kt` y `HomeScreen.kt`), diferenciar los botones: el escudo/logo a la izquierda lleva siempre al Inicio del rol actual, y el botón derecho 'Mi Cuenta' abre `UserAccountScreen`.
-- [ ] **`[AND-4.2]`** En `StitchBottomNavBar` (`MainActivity.kt` L. 108-127):
+- [x] **`[AND-4.1]`** En `StitchTopAppBar` (`StitchNavigation.kt` y `HomeScreen.kt`), diferenciar los botones: el escudo/logo a la izquierda lleva siempre al Inicio del rol actual, y el botón derecho 'Mi Cuenta' abre `UserAccountScreen`.
+- [x] **`[AND-4.2]`** En `StitchBottomNavBar` (`MainActivity.kt` L. 108-127):
   - (a) Pestaña 'Inicio' -> lleva a `ClientHomeCategories` (si es vecino) o `ProfessionalDashboard` (si es profesional);
   - (b) Pestaña 'Mis contactos' -> abre la nueva pantalla `MyRequestsHistoryScreen` conectada a `GET /api/v1/requests/my` (corrige BUG-02);
   - (c) Pestaña 'Ayuda' -> abre la pantalla de Ayuda Vecinal y Garantías con botón de llamado directo al 0800-444-OFICIO.
-- [ ] **`[AND-4.3]`** En `UserAccountScreen`, mostrar los datos reales del usuario logueado y botones acordes a su rol: si es Vecino, cambiar dirección/barrio y ver su historial de pedidos; si es Profesional, ir a su Panel de Solicitudes o actualizar su legajo de verificación DNI/Matrícula; más el botón rojo de Cerrar Sesión que limpia DataStore y vuelve al inicio.
+- [x] **`[AND-4.3]`** En `UserAccountScreen`, mostrar los datos reales del usuario logueado y botones acordes a su rol: si es Vecino, cambiar dirección/barrio y ver su historial de pedidos; si es Profesional, ir a su Panel de Solicitudes o actualizar su legajo de verificación DNI/Matrícula; más el botón rojo de Cerrar Sesión que limpia DataStore y vuelve al inicio.
 
 ---
 

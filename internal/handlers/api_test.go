@@ -269,6 +269,13 @@ func (s *testStore) UpdateProfessionalVerification(_ context.Context, profID str
 	p.DNIFrontURL = input.DNIFrontURL
 	p.DNIBackURL = input.DNIBackURL
 	p.LicenseDocURL = input.LicenseDocURL
+	if input.DNIFrontURL != "" && input.DNIBackURL != "" {
+		p.IsDNIVerified = true
+		if u, exists := s.users[p.UserID]; exists {
+			u.IsDNIVerified = true
+			s.users[p.UserID] = u
+		}
+	}
 	s.pros[profID] = p
 	return &p, nil
 }
@@ -485,19 +492,25 @@ func TestStitchFullWorkflowAPI(t *testing.T) {
 	}
 	revBytes, _ := json.Marshal(revInput)
 	reqRev := httptest.NewRequest(http.MethodPost, "/api/v1/requests/"+createdSR.ID+"/reviews", bytes.NewReader(revBytes))
+	reqRev.Header.Set("Authorization", "Bearer "+authRes.Token)
 	recRev := httptest.NewRecorder()
 	mux.ServeHTTP(recRev, reqRev)
 	if recRev.Code != http.StatusCreated {
 		t.Fatalf("esperaba 201 al calificar, obtuvo %d: %s", recRev.Code, recRev.Body.String())
 	}
 
-	// 8. Pantalla 9 & 10: Panel del Profesional y cambio de disponibilidad
+	// 8. Pantalla 9 & 10: Panel del Profesional y cambio de disponibilidad (con JWT del profesional)
+	proToken, err := auth.GenerateToken("22222222-2222-2222-2222-222222222222", "roberto.gomez@guiaoficios.ar", "professional", pros[0].ID)
+	if err != nil {
+		t.Fatalf("no se pudo generar token profesional: %v", err)
+	}
 	availBody := []byte(`{"is_available_now":false}`)
 	reqAvail := httptest.NewRequest(http.MethodPatch, "/api/v1/professionals/"+pros[0].ID+"/availability", bytes.NewReader(availBody))
+	reqAvail.Header.Set("Authorization", "Bearer "+proToken)
 	recAvail := httptest.NewRecorder()
 	mux.ServeHTTP(recAvail, reqAvail)
 	if recAvail.Code != http.StatusOK {
-		t.Fatalf("esperaba 200 al cambiar disponibilidad, obtuvo %d", recAvail.Code)
+		t.Fatalf("esperaba 200 al cambiar disponibilidad, obtuvo %d: %s", recAvail.Code, recAvail.Body.String())
 	}
 
 	reqDash := httptest.NewRequest(http.MethodGet, "/api/v1/professionals/"+pros[0].ID+"/dashboard", nil)
@@ -515,4 +528,42 @@ func TestStitchFullWorkflowAPI(t *testing.T) {
 		t.Fatalf("esperaba 200 en /api/v1/metrics, obtuvo %d", recMetrics.Code)
 	}
 	t.Logf("Snapshot Métricas Datadog: %s", recMetrics.Body.String())
+}
+
+func TestProtectedEndpointsAndOwnership(t *testing.T) {
+	store := newTestStore()
+	h := NewAPIHandler(store, "postgresql+postgis", t.TempDir())
+	rawMux := http.NewServeMux()
+	h.RegisterRoutes(rawMux)
+	mux := telemetry.ObservabilityMiddleware(rawMux)
+
+	// 1. GET /api/v1/requests/my sin JWT debe devolver 401 Unauthorized (BUG-03)
+	reqMyNoAuth := httptest.NewRequest(http.MethodGet, "/api/v1/requests/my", nil)
+	recMyNoAuth := httptest.NewRecorder()
+	mux.ServeHTTP(recMyNoAuth, reqMyNoAuth)
+	if recMyNoAuth.Code != http.StatusUnauthorized {
+		t.Fatalf("esperaba 401 en /api/v1/requests/my sin token, obtuvo %d", recMyNoAuth.Code)
+	}
+
+	// 2. PATCH /api/v1/professionals/{id}/availability sin JWT debe devolver 401 Unauthorized (BUG-07)
+	availBody := []byte(`{"is_available_now":false}`)
+	reqAvailNoAuth := httptest.NewRequest(http.MethodPatch, "/api/v1/professionals/aaaa1111-1111-1111-1111-111111111111/availability", bytes.NewReader(availBody))
+	recAvailNoAuth := httptest.NewRecorder()
+	mux.ServeHTTP(recAvailNoAuth, reqAvailNoAuth)
+	if recAvailNoAuth.Code != http.StatusUnauthorized {
+		t.Fatalf("esperaba 401 en availability sin token, obtuvo %d", recAvailNoAuth.Code)
+	}
+
+	// 3. PATCH /api/v1/professionals/{id}/availability con JWT de un cliente (no dueño) debe devolver 403 Forbidden (BUG-07)
+	clientToken, err := auth.GenerateToken("11111111-1111-1111-1111-111111111111", "maria.elena@correo.com", "client", "")
+	if err != nil {
+		t.Fatalf("no se pudo generar token cliente: %v", err)
+	}
+	reqAvailForbidden := httptest.NewRequest(http.MethodPatch, "/api/v1/professionals/aaaa1111-1111-1111-1111-111111111111/availability", bytes.NewReader(availBody))
+	reqAvailForbidden.Header.Set("Authorization", "Bearer "+clientToken)
+	recAvailForbidden := httptest.NewRecorder()
+	mux.ServeHTTP(recAvailForbidden, reqAvailForbidden)
+	if recAvailForbidden.Code != http.StatusForbidden {
+		t.Fatalf("esperaba 403 al modificar perfil profesional ajeno, obtuvo %d: %s", recAvailForbidden.Code, recAvailForbidden.Body.String())
+	}
 }

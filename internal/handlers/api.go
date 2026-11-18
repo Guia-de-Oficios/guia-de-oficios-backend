@@ -58,9 +58,9 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/register", h.handleRegisterUser)
 	mux.HandleFunc("POST /api/v1/auth/login", h.handleLoginUser)
 	mux.HandleFunc("POST /api/v1/auth/google", h.handleGoogleAuth)
-	mux.HandleFunc("GET /api/v1/auth/me", h.withOptionalAuth(h.handleGetCurrentUser))
-	mux.HandleFunc("PATCH /api/v1/users/me/address", h.withOptionalAuth(h.handleUpdateUserAddress))
-	mux.HandleFunc("PUT /api/v1/users/me", h.withOptionalAuth(h.handleUpdateUserProfile))
+	mux.HandleFunc("GET /api/v1/auth/me", h.withRequiredAuth(h.handleGetCurrentUser))
+	mux.HandleFunc("PATCH /api/v1/users/me/address", h.withRequiredAuth(h.handleUpdateUserAddress))
+	mux.HandleFunc("PUT /api/v1/users/me", h.withRequiredAuth(h.handleUpdateUserProfile))
 	mux.HandleFunc("GET /api/v1/geocode", h.handleGeocodeAddress)
 	mux.HandleFunc("GET /api/v1/geocode/suggest", h.handleGeocodeSuggest)
 
@@ -73,16 +73,38 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/professionals/{id}", h.handleGetProfessional)
 
 	// Pantallas 6, 7 & 8: Solicitud Guiada, Confirmación de Contacto y Calificación (GDO-16, GDO-17)
-	mux.HandleFunc("POST /api/v1/requests", h.withOptionalAuth(h.handleCreateRequest))
+	mux.HandleFunc("POST /api/v1/requests", h.withRequiredAuth(h.handleCreateRequest))
 	mux.HandleFunc("GET /api/v1/requests", h.withOptionalAuth(h.handleListRequests))
-	mux.HandleFunc("GET /api/v1/requests/my", h.withOptionalAuth(h.handleListMyClientRequests))
+	mux.HandleFunc("GET /api/v1/requests/my", h.withRequiredAuth(h.handleListMyClientRequests))
 	mux.HandleFunc("GET /api/v1/requests/{id}", h.withOptionalAuth(h.handleGetRequest))
-	mux.HandleFunc("POST /api/v1/requests/{id}/reviews", h.withOptionalAuth(h.handleCreateReview))
+	mux.HandleFunc("POST /api/v1/requests/{id}/reviews", h.withRequiredAuth(h.handleCreateReview))
 
 	// Pantallas 9 & 10: Profesional Registro/Verificación DNI + Matrícula y Panel de Solicitudes (GDO-18)
-	mux.HandleFunc("POST /api/v1/professionals/{id}/verification", h.withOptionalAuth(h.handleUpdateVerification))
-	mux.HandleFunc("PATCH /api/v1/professionals/{id}/availability", h.withOptionalAuth(h.handleUpdateAvailability))
+	mux.HandleFunc("POST /api/v1/professionals/{id}/verification", h.withRequiredAuth(h.handleUpdateVerification))
+	mux.HandleFunc("PATCH /api/v1/professionals/{id}/availability", h.withRequiredAuth(h.handleUpdateAvailability))
 	mux.HandleFunc("GET /api/v1/professionals/{id}/dashboard", h.withOptionalAuth(h.handleGetProfessionalDashboard))
+}
+
+func (h *APIHandler) withRequiredAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			writeJSON(w, http.StatusNoContent, nil)
+			return
+		}
+		authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+		if !strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+			writeError(w, http.StatusUnauthorized, "Autenticación requerida: falta token Bearer")
+			return
+		}
+		token := strings.TrimSpace(authHeader[7:])
+		claims, err := auth.ParseAndVerifyToken(token)
+		if err != nil || claims == nil || claims.UserID == "" {
+			writeError(w, http.StatusUnauthorized, "Sesión inválida o expirada")
+			return
+		}
+		ctx := context.WithValue(r.Context(), claimsContextKey, claims)
+		next(w, r.WithContext(ctx))
+	}
 }
 
 func (h *APIHandler) withOptionalAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -569,10 +591,12 @@ func (h *APIHandler) handleListRequests(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *APIHandler) handleListMyClientRequests(w http.ResponseWriter, r *http.Request) {
-	clientID := r.URL.Query().Get("client_id")
-	if claims := getClaims(r); claims != nil && claims.UserID != "" {
-		clientID = claims.UserID
+	claims := getClaims(r)
+	if claims == nil || claims.UserID == "" {
+		writeError(w, http.StatusUnauthorized, "Debés iniciar sesión para ver tus solicitudes")
+		return
 	}
+	clientID := claims.UserID
 	list, err := h.store.ListClientServiceRequests(r.Context(), clientID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Error al listar tus solicitudes: "+err.Error())
@@ -620,8 +644,29 @@ func (h *APIHandler) handleCreateReview(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusCreated, rev)
 }
 
+// verifyProfessionalOwnership valida que el JWT autenticado pertenezca al dueño del perfil profesional.
+func (h *APIHandler) verifyProfessionalOwnership(w http.ResponseWriter, r *http.Request, profID string) bool {
+	claims := getClaims(r)
+	if claims == nil || claims.UserID == "" {
+		writeError(w, http.StatusUnauthorized, "Sesión requerida para modificar el perfil profesional")
+		return false
+	}
+	if claims.ProfessionalID == profID {
+		return true
+	}
+	existingProf, err := h.store.GetProfessionalByID(r.Context(), profID)
+	if err != nil || existingProf == nil || existingProf.UserID != claims.UserID {
+		writeError(w, http.StatusForbidden, "No tenés permiso para modificar el perfil de otro profesional")
+		return false
+	}
+	return true
+}
+
 func (h *APIHandler) handleUpdateVerification(w http.ResponseWriter, r *http.Request) {
 	profID := r.PathValue("id")
+	if !h.verifyProfessionalOwnership(w, r, profID) {
+		return
+	}
 	var input models.OnboardingVerificationInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "Datos de verificación inválidos")
@@ -643,6 +688,9 @@ func (h *APIHandler) handleUpdateVerification(w http.ResponseWriter, r *http.Req
 
 func (h *APIHandler) handleUpdateAvailability(w http.ResponseWriter, r *http.Request) {
 	profID := r.PathValue("id")
+	if !h.verifyProfessionalOwnership(w, r, profID) {
+		return
+	}
 	var input models.AvailabilityToggleInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "Datos de disponibilidad inválidos")
