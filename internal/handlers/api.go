@@ -52,7 +52,7 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	// Archivos estáticos de fotos de problemas, DNI y matrículas (GDO-10)
 	fileServer := http.FileServer(http.Dir(h.uploadDir))
 	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", fileServer))
-	mux.HandleFunc("POST /api/v1/uploads", h.withOptionalAuth(h.handleUploadFile))
+	mux.HandleFunc("POST /api/v1/uploads", h.withRequiredAuth(h.handleUploadFile))
 
 	// Pantallas 1 & 2: Bienvenida, Selección de Rol, Registro, Login y Google Auth (GDO-11, GDO-12, GDO-13)
 	mux.HandleFunc("POST /api/v1/auth/register", h.handleRegisterUser)
@@ -385,7 +385,25 @@ func (h *APIHandler) handleUpdateUserProfile(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, user)
 }
 
+func sanitizeUploadCategory(raw string) string {
+	allowed := map[string]bool{
+		"problem_photo": true,
+		"dni_front":     true,
+		"dni_back":      true,
+		"license_doc":   true,
+		"portfolio":     true,
+		"avatar":        true,
+		"attachment":    true,
+	}
+	clean := strings.ToLower(strings.TrimSpace(raw))
+	if allowed[clean] {
+		return clean
+	}
+	return "attachment"
+}
+
 func (h *APIHandler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "El archivo supera los 10 MB o el formato multipart es inválido")
 		return
@@ -397,15 +415,13 @@ func (h *APIHandler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	category := strings.TrimSpace(r.FormValue("category"))
-	if category == "" {
-		category = strings.TrimSpace(r.FormValue("kind"))
+	rawCat := strings.TrimSpace(r.FormValue("category"))
+	if rawCat == "" {
+		rawCat = strings.TrimSpace(r.FormValue("kind"))
 	}
-	if category == "" {
-		category = "attachment"
-	}
+	category := sanitizeUploadCategory(rawCat)
 
-	ext := strings.ToLower(filepath.Ext(header.Filename))
+	ext := strings.ToLower(filepath.Ext(filepath.Base(header.Filename)))
 	allowedExts := map[string]bool{
 		".jpg":  true,
 		".jpeg": true,

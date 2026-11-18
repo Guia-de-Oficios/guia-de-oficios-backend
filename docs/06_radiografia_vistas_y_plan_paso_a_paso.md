@@ -338,9 +338,9 @@ A continuación están los 14 Pasos ordenados desde el Login hasta el APK final.
 ### PASO 5 · Home del Vecino, Diagnóstico Inteligente y Semilla de los 8 Rubros (Vista #4)
 - **Rama Backend:** `feat/paso-05-seed-y-coordenadas` | **Rama Android:** `feat/paso-05-home-vecino`
 - **Objetivo de Calidad:** Dejar el Home del Vecino 100% funcional, con coordenadas reales por barrio, diagnóstico sin textos pre-escritos y los 8 rubros poblados en PostgreSQL.
-- [ ] **`[BE-5.1]`** En `migrations/002_seed.sql`, cargar al menos 16 profesionales verificados distribuidos en los 8 rubros (Plomero, Electricista, Gasista, Aire acondicionado, Pintor, Albañil, Jardinero y Cerrajero) con fotos de perfil, portfolios de trabajos con imágenes reales, matrículas y coordenadas PostGIS en Caballito, Flores, Almagro y Parque Chacabuco.
-- [ ] **`[BE-5.2]`** En `UpdateUserAddress` (`store.go`), agregar un diccionario geocodificador de barrios de CABA/GBA para que al cambiar de dirección actualice `saved_lat` y `saved_lng` reales del barrio correspondiente.
-- [ ] **`[AND-5.3]`** En `HomeScreen.kt`:
+- [x] **`[BE-5.1]`** En `migrations/002_seed.sql`, cargar al menos 16 profesionales verificados distribuidos en los 8 rubros (Plomero, Electricista, Gasista, Aire acondicionado, Pintor, Albañil, Jardinero y Cerrajero) con fotos de perfil, portfolios de trabajos con imágenes reales, matrículas y coordenadas PostGIS en Caballito, Flores, Almagro y Parque Chacabuco.
+- [x] **`[BE-5.2]`** En `UpdateUserAddress` (`store.go`), agregar un diccionario geocodificador de barrios de CABA/GBA para que al cambiar de dirección actualice `saved_lat` y `saved_lng` reales del barrio correspondiente.
+- [x] **`[AND-5.3]`** En `HomeScreen.kt`:
   - (a) vaciar el texto hardcodeado 'No enciende el calefón de la cocina' del diálogo de diagnóstico (L. 80) y agregar chips de ejemplos rápidos tocables ('Pierde agua el flexible', 'Saltó la térmica', 'Olor a gas', 'Se trabó la cerradura');
   - (b) cuando el backend responde la categoría sugerida, mostrar el botón 'Ver [Rubro]s cerca de mi casa ->' que navega directo al listado filtrado.
 

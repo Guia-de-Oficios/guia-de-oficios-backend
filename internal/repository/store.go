@@ -1142,10 +1142,17 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, userID string) (*models
 }
 
 func (s *PostgresStore) UpdateUserAddress(ctx context.Context, userID string, input models.UpdateAddressInput) (*models.User, error) {
+	neighborhood := strings.TrimSpace(input.Neighborhood)
+	street := strings.TrimSpace(input.SavedAddress)
+	if neighborhood == "" && strings.Contains(street, ",") {
+		parts := strings.SplitN(street, ",", 2)
+		street = strings.TrimSpace(parts[0])
+		neighborhood = strings.TrimSpace(parts[1])
+	}
 	geo := GeocodeArgentineAddress(
 		ctx,
-		input.Neighborhood,
-		input.SavedAddress,
+		neighborhood,
+		street,
 		input.SavedLat,
 		input.SavedLng,
 	)
@@ -1273,21 +1280,27 @@ func (s *PostgresStore) SuggestCategoryByProblem(ctx context.Context, problem st
 	}
 
 	switch {
-	case strings.Contains(lower, "gas") || strings.Contains(lower, "calefón") || strings.Contains(lower, "calefon") || strings.Contains(lower, "estufa"):
+	case strings.Contains(lower, "gas") || strings.Contains(lower, "calefón") || strings.Contains(lower, "calefon") || strings.Contains(lower, "estufa") || strings.Contains(lower, "hornalla") || strings.Contains(lower, "piloto"):
 		selected = findBySlug("gasista")
-		explanation = "Para artefactos de gas o calefones siempre te recomendamos un Gasista Matriculado."
-	case strings.Contains(lower, "luz") || strings.Contains(lower, "enchufe") || strings.Contains(lower, "cable") || strings.Contains(lower, "térmica") || strings.Contains(lower, "termica"):
+		explanation = "Para artefactos de gas, olor a gas o calefones siempre te recomendamos un Gasista Matriculado."
+	case strings.Contains(lower, "luz") || strings.Contains(lower, "enchufe") || strings.Contains(lower, "cable") || strings.Contains(lower, "térmica") || strings.Contains(lower, "termica") || strings.Contains(lower, "disyuntor") || strings.Contains(lower, "corto"):
 		selected = findBySlug("electricista")
-		explanation = "Para problemas con enchufes, llaves térmicas o cortes de luz, el oficio indicado es un Electricista."
-	case strings.Contains(lower, "aire") || strings.Contains(lower, "split"):
+		explanation = "Para problemas con enchufes, llaves térmicas, disyuntores o cortes de luz, el oficio indicado es un Electricista."
+	case strings.Contains(lower, "aire") || strings.Contains(lower, "split") || strings.Contains(lower, "frigor") || strings.Contains(lower, "enfría") || strings.Contains(lower, "enfria"):
 		selected = findBySlug("aire-acondicionado")
-		explanation = "Para equipos de climatización y filtros te sugerimos un técnico en Aire Acondicionado."
-	case strings.Contains(lower, "llave") || strings.Contains(lower, "cerradura") || strings.Contains(lower, "puerta"):
+		explanation = "Para equipos de climatización, carga de gas y limpieza de filtros te sugerimos un técnico en Aire Acondicionado."
+	case strings.Contains(lower, "llave") || strings.Contains(lower, "cerradura") || strings.Contains(lower, "puerta") || strings.Contains(lower, "cerrojo") || strings.Contains(lower, "trabó") || strings.Contains(lower, "trabo"):
 		selected = findBySlug("cerrajero")
-		explanation = "Para cerraduras trabadas o llaves, te conectamos con un Cerrajero de urgencias."
-	case strings.Contains(lower, "pint") || strings.Contains(lower, "humedad"):
+		explanation = "Para cerraduras trabadas, llaves rotas o cambios de combinación, te conectamos con un Cerrajero de urgencias."
+	case strings.Contains(lower, "pint") || strings.Contains(lower, "látex") || strings.Contains(lower, "latex") || strings.Contains(lower, "enduido") || strings.Contains(lower, "cielorraso"):
 		selected = findBySlug("pintor")
-		explanation = "Para pintura de paredes, techos y humedad, te recomendamos un Pintor de la zona."
+		explanation = "Para pintura de paredes, cielorrasos y terminaciones prolijas, te recomendamos un Pintor de la zona."
+	case strings.Contains(lower, "revoque") || strings.Contains(lower, "cerámic") || strings.Contains(lower, "ceramic") || strings.Contains(lower, "baldosa") || strings.Contains(lower, "pared") || strings.Contains(lower, "piso") || strings.Contains(lower, "membrana") || strings.Contains(lower, "albañil") || strings.Contains(lower, "albanil"):
+		selected = findBySlug("albanil")
+		explanation = "Para arreglos de paredes, revoques, cerámicos flojos o filtraciones de techo, te sugerimos un Albañil verificado."
+	case strings.Contains(lower, "pasto") || strings.Contains(lower, "césped") || strings.Contains(lower, "cesped") || strings.Contains(lower, "poda") || strings.Contains(lower, "jardín") || strings.Contains(lower, "jardin") || strings.Contains(lower, "planta") || strings.Contains(lower, "árbol") || strings.Contains(lower, "arbol"):
+		selected = findBySlug("jardinero")
+		explanation = "Para corte de pasto, poda de árboles y mantenimiento de patios o balcones, te recomendamos un Jardinero del barrio."
 	}
 
 	return &models.DiagnosticSuggestionResponse{
@@ -1557,6 +1570,12 @@ func (s *PostgresStore) GetServiceRequestByID(ctx context.Context, id string) (*
 }
 
 func (s *PostgresStore) ListServiceRequests(ctx context.Context, professionalID string) ([]models.ServiceRequest, error) {
+	list := make([]models.ServiceRequest, 0)
+	trimmedProfID := strings.TrimSpace(professionalID)
+	if trimmedProfID == "" {
+		return list, nil
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			r.id, COALESCE(r.client_id::text, ''), r.client_name, r.client_phone,
@@ -1568,15 +1587,14 @@ func (s *PostgresStore) ListServiceRequests(ctx context.Context, professionalID 
 		FROM service_requests r
 		JOIN professional_profiles p ON p.id = r.professional_id
 		JOIN users u ON u.id = p.user_id
-		WHERE ($1::text = '' OR r.professional_id::text = $1)
+		WHERE r.professional_id::text = $1
 		ORDER BY (CASE WHEN r.urgency = 'urgente' AND r.status = 'pending' THEN 0 ELSE 1 END) ASC, r.created_at DESC
-	`, professionalID)
+	`, trimmedProfID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var list []models.ServiceRequest
 	for rows.Next() {
 		var item models.ServiceRequest
 		if err := rows.Scan(
