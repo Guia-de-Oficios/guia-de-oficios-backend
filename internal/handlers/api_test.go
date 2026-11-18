@@ -165,6 +165,21 @@ func (s *testStore) UpdateUserAddress(_ context.Context, userID string, input mo
 	return &u, nil
 }
 
+func (s *testStore) UpdateUserProfile(ctx context.Context, userID string, input models.UpdateUserProfileInput) (*models.User, error) {
+	u, ok := s.users[userID]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	geo := repository.GeocodeArgentineAddress(ctx, input.Neighborhood, input.SavedAddress, input.SavedLat, input.SavedLng)
+	u.FullName = input.FullName
+	u.Phone = input.Phone
+	u.SavedAddress = geo.FormattedAddress
+	u.SavedLat = geo.Lat
+	u.SavedLng = geo.Lng
+	s.users[userID] = u
+	return &u, nil
+}
+
 func (s *testStore) ListCategories(_ context.Context) ([]models.Category, error) {
 	return []models.Category{
 		{ID: 1, Name: "Plomero", Slug: "plomero"},
