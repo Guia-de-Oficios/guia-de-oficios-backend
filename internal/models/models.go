@@ -108,6 +108,7 @@ type User struct {
 	SavedLat       float64   `json:"saved_lat"`
 	SavedLng       float64   `json:"saved_lng"`
 	ProfessionalID string    `json:"professional_id,omitempty"`
+	IsDNIVerified  bool      `json:"is_dni_verified"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 
